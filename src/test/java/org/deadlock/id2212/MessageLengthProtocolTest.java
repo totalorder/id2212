@@ -20,7 +20,7 @@ public class MessageLengthProtocolTest {
 
   @Before
   public void setUp() throws Exception {
-    asyncIO = new TCPAsyncIO();
+    asyncIO = new TCPAsyncIO(5);
     messageLengthProtocol = new MessageLengthProtocol(asyncIO);
   }
 

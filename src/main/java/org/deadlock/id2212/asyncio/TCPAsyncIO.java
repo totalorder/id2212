@@ -12,6 +12,7 @@ import java.util.function.Consumer;
 
 public class TCPAsyncIO implements AsyncIO {
   private final Selector selector;
+  private final int clientReceiveBufferSize;
   private Consumer<AsyncIOClient> clientAcceptedCallback;
   private BiConsumer<AsyncIOClient, ByteBuffer> clientDataReceivedCallback;
   private int listeningPort = 0;
@@ -54,7 +55,7 @@ public class TCPAsyncIO implements AsyncIO {
      */
     public TCPAsyncIOClient(final SocketChannel channel) {
       this.channel = channel;
-      buffer = ByteBuffer.allocateDirect(1024);
+      buffer = ByteBuffer.allocateDirect(clientReceiveBufferSize);
     }
 
     protected void onIsReadable() throws IOException {
@@ -74,6 +75,7 @@ public class TCPAsyncIO implements AsyncIO {
 
       if (!buffer.hasRemaining()) {
         buffer.clear();
+        lastPosition = 0;
       }
     }
 
@@ -106,6 +108,11 @@ public class TCPAsyncIO implements AsyncIO {
   }
 
   public TCPAsyncIO() {
+    this(1024);
+  }
+
+  public TCPAsyncIO(final int clientReceiveBufferSize) {
+    this.clientReceiveBufferSize = clientReceiveBufferSize;
     try {
       selector = Selector.open();
     } catch (IOException e) {

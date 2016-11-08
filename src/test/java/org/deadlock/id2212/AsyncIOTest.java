@@ -1,6 +1,8 @@
 package org.deadlock.id2212;
 
-import org.deadlock.id2212.asyncio.*;
+import org.deadlock.id2212.asyncio.AsyncIO;
+import org.deadlock.id2212.asyncio.AsyncIOClient;
+import org.deadlock.id2212.asyncio.TCPAsyncIO;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
