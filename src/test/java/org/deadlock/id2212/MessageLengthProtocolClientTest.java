@@ -28,7 +28,7 @@ public class MessageLengthProtocolClientTest {
 
   @Test
   public void canSendAndReceive() throws UnsupportedEncodingException, ExecutionException, InterruptedException {
-    final CompletionStage<byte[]> receive = client.receieve();
+    final CompletionStage<byte[]> receive = client.receive();
     client.send("Test message".getBytes("UTF-8"));
     final String result = receive.thenApply(this::stringFromUTF8Bytes).toCompletableFuture().get();
     assertEquals("Test message", result);

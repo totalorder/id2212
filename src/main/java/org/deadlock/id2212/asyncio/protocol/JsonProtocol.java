@@ -31,7 +31,7 @@ public class JsonProtocol implements Protocol<JsonClient> {
 
     @Override
     public <T> CompletionStage<T> receive(Class<T> clazz) {
-      return bytesClient.receieve().thenApply(bytes -> {
+      return bytesClient.receive().thenApply(bytes -> {
         try {
           return mapper.readValue(bytes, clazz);
         } catch (IOException e) {

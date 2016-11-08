@@ -53,16 +53,24 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
     }
 
     @Override
-    public CompletionStage<Void> send(final byte[] bytes) {
-      final ByteBuffer buffer = ByteBuffer.allocateDirect(4 + bytes.length);
-      buffer.putInt(bytes.length);
-      buffer.put(bytes);
+    public CompletionStage<Void> send(final byte[]... byteArrays) {
+      int totalSize = 0;
+      for (byte[] bytes : byteArrays) {
+        totalSize += bytes.length;
+      }
+
+      final ByteBuffer buffer = ByteBuffer.allocateDirect(4 + totalSize);
+      buffer.putInt(totalSize);
+      for (byte[] bytes : byteArrays) {
+        buffer.put(bytes);
+      }
+
       buffer.flip();
       return asyncIOClient.send(buffer);
     }
 
     @Override
-    public CompletionStage<byte[]> receieve() {
+    public CompletionStage<byte[]> receive() {
       return receivedMessages.remove().thenApply(buffer -> {
         byte[] bytes = new byte[buffer.remaining()];
         buffer.get(bytes);

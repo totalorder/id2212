@@ -73,7 +73,7 @@ public class MessageLengthProtocolTest {
     connectedClient.send("Test message".getBytes("UTF-8")).toCompletableFuture().get();
 
     // Then
-    final byte[] bytes = acceptedClient.receieve().toCompletableFuture().get();
+    final byte[] bytes = acceptedClient.receive().toCompletableFuture().get();
     assertEquals("Test message", new String(bytes, "UTF-8"));
   }
 }
