@@ -1,5 +1,6 @@
-package org.deadlock.id2212;
+package org.deadlock.id2212.asyncio.protocol;
 
+import org.deadlock.id2212.asyncio.AsyncQueue;
 import org.deadlock.id2212.asyncio.AsyncIO;
 import org.deadlock.id2212.asyncio.AsyncIOClient;
 

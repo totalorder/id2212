@@ -1,6 +1,6 @@
 package org.deadlock.id2212;
 
-import org.deadlock.id2212.AsyncQueue;
+import org.deadlock.id2212.asyncio.AsyncQueue;
 import org.junit.Before;
 import org.junit.Test;
 

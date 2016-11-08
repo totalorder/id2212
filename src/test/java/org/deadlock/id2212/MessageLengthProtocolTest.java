@@ -2,6 +2,8 @@ package org.deadlock.id2212;
 
 import org.deadlock.id2212.asyncio.AsyncIO;
 import org.deadlock.id2212.asyncio.TCPAsyncIO;
+import org.deadlock.id2212.asyncio.protocol.BytesClient;
+import org.deadlock.id2212.asyncio.protocol.MessageLengthProtocol;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
