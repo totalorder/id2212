@@ -1,4 +1,5 @@
-import java.io.Closeable;
+package org.deadlock.id2212.asyncio;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -9,10 +10,10 @@ import java.util.concurrent.*;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
-public class AsyncIO implements Closeable {
+public class TCPAsyncIO implements AsyncIO {
   private final Selector selector;
-  private final Consumer<Client> clientAcceptedCallback;
-  private final BiConsumer<Client, ByteBuffer> clientDataReceivedCallback;
+  private Consumer<AsyncIOClient> clientAcceptedCallback;
+  private BiConsumer<AsyncIOClient, ByteBuffer> clientDataReceivedCallback;
   private int listeningPort = 0;
   private volatile CompletableFuture<Void> started = null;
   private volatile CompletableFuture<Void> closed = null;
@@ -27,7 +28,7 @@ public class AsyncIO implements Closeable {
     }
   }
 
-  class Client {
+  class TCPAsyncIOClient implements AsyncIOClient {
     class SendBuffer {
       private final CompletableFuture<Void> sentFuture;
       private final ByteBuffer byteBuffer;
@@ -46,14 +47,14 @@ public class AsyncIO implements Closeable {
     private volatile SendBuffer currentlyWriting = null;
 
     /**
-     * NOTE: Client is currently not thread safe. onIsReadable() and onIsWritable() is expected
+     * NOTE: TCPAsyncIOClient is currently not thread safe. onIsReadable() and onIsWritable() is expected
      * to be called from only one thread. send() however is thread-safe.
      *
      * @param channel
      */
-    public Client(final SocketChannel channel) {
+    public TCPAsyncIOClient(final SocketChannel channel) {
       this.channel = channel;
-      buffer = ByteBuffer.allocate(1024);
+      buffer = ByteBuffer.allocateDirect(1024);
     }
 
     protected void onIsReadable() throws IOException {
@@ -97,21 +98,14 @@ public class AsyncIO implements Closeable {
       }
     }
 
-    public CompletionStage<Void> send(final byte[] bytes) {
-      return send(ByteBuffer.wrap(bytes));
-    }
-
     public CompletionStage<Void> send(final ByteBuffer byteBuffer) {
       final CompletableFuture<Void> sentFuture = new CompletableFuture<>();
       sendBuffers.addLast(new SendBuffer(sentFuture, byteBuffer));
-      return sentFuture;
+      return sentFuture.thenCompose(ignored -> ensureStarted());
     }
   }
 
-  public AsyncIO(final Consumer<Client> clientAcceptedCallback,
-                 final BiConsumer<Client, ByteBuffer> clientDataReceivedCallback) {
-    this.clientAcceptedCallback = clientAcceptedCallback;
-    this.clientDataReceivedCallback = clientDataReceivedCallback;
+  public TCPAsyncIO() {
     try {
       selector = Selector.open();
     } catch (IOException e) {
@@ -129,11 +123,11 @@ public class AsyncIO implements Closeable {
             }
 
             if (key.isReadable()) {
-              ((Client)key.attachment()).onIsReadable();
+              ((TCPAsyncIOClient)key.attachment()).onIsReadable();
             }
 
             if (key.isWritable()) {
-              ((Client)key.attachment()).onIsWritable();
+              ((TCPAsyncIOClient)key.attachment()).onIsWritable();
             }
           }
           selector.selectedKeys().clear();
@@ -141,41 +135,75 @@ public class AsyncIO implements Closeable {
       } catch (Throwable e) {
         e.printStackTrace();
       } finally {
-        if (!started.isDone()) {
+        if (started != null && !started.isDone()) {
           started.complete(null);
         }
 
         if (closed == null) {
           selectForever();
         } else if (!closed.isDone()) {
-          closed.complete(null);
+          doClose();
         }
       }
     });
   }
 
+  private void doClose() {
+    try {
+      selector.keys().stream().map(key -> {
+        try {
+          key.channel().close();
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+        return null;
+      });
+      selector.close();
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+    closed.complete(null);
+  }
+
   private void accept(final SelectableChannel acceptableChannel) throws IOException {
     final SocketChannel clientChannel = ((ServerSocketChannel)acceptableChannel).accept();
 
-    final Client client = createClient(clientChannel);
+    final TCPAsyncIOClient client = createClient(clientChannel);
 
     clientAcceptedCallback.accept(client);
   }
 
-  private Client createClient(final SocketChannel clientChannel) throws IOException {
-    final Client client = new Client(clientChannel);
+  private TCPAsyncIOClient createClient(final SocketChannel clientChannel) throws IOException {
+    final TCPAsyncIOClient client = new TCPAsyncIOClient(clientChannel);
 
     clientChannel.configureBlocking(false);
     clientChannel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, client);
     return client;
   }
 
-
-  public CompletionStage<Void> startServer(final int port) {
+  private synchronized CompletionStage<Void> ensureStarted() {
     if (started != null) {
-      throw new RuntimeException("Server already started!");
+      return started;
     }
+    if (clientDataReceivedCallback == null) {
+      throw new RuntimeException("setClientDataReceivedCallback() has to be called before using AsyncIO");
+    }
+
     started = new CompletableFuture<>();
+    selectForever();
+    return started;
+  }
+
+  @Override
+  public void setClientDataReceivedCallback(final BiConsumer<AsyncIOClient, ByteBuffer> clientDataReceivedCallback) {
+    this.clientDataReceivedCallback = clientDataReceivedCallback;
+  }
+
+  @Override
+  public CompletionStage<Void> startServer(final int port,
+                                           final Consumer<AsyncIOClient> clientAcceptedCallback) {
+
+    this.clientAcceptedCallback = clientAcceptedCallback;
 
     try {
       final ServerSocketChannel serverChannel = ServerSocketChannel.open();
@@ -189,17 +217,24 @@ public class AsyncIO implements Closeable {
       e.printStackTrace();
     }
 
-    selectForever();
-
-    return started;
+    return ensureStarted();
   }
 
-  public CompletionStage<Client> connect(final InetSocketAddress address) throws IOException {
-    final SocketChannel channel = SocketChannel.open();
-    channel.configureBlocking(true);
-    channel.connect(address);
+  @Override
+  public CompletionStage<AsyncIOClient> connect(final InetSocketAddress address) {
     final CompletableFuture<Void> clientConnectedFuture = new CompletableFuture<>();
-    awaitConnection(channel, clientConnectedFuture);
+
+    final SocketChannel channel;
+    try {
+      channel = SocketChannel.open();
+      channel.configureBlocking(true);
+      channel.connect(address);
+      awaitConnection(channel, clientConnectedFuture);
+    } catch (IOException e) {
+      clientConnectedFuture.completeExceptionally(new RuntimeException(e));
+      return clientConnectedFuture.thenApply(ignored -> null);
+    }
+
     return clientConnectedFuture.thenApply(ignored -> {
       try {
         return createClient(channel);
@@ -224,6 +259,7 @@ public class AsyncIO implements Closeable {
     });
   }
 
+  @Override
   public int getListeningPort() {
     return listeningPort;
   }
