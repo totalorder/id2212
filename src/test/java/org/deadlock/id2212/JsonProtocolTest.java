@@ -2,7 +2,9 @@ package org.deadlock.id2212;
 
 import org.deadlock.id2212.asyncio.AsyncIO;
 import org.deadlock.id2212.asyncio.TCPAsyncIO;
-import org.deadlock.id2212.asyncio.protocol.JsonClient;
+import org.deadlock.id2212.asyncio.protocol.IdJsonMessage;
+import org.deadlock.id2212.asyncio.protocol.IdJsonClient;
+import org.deadlock.id2212.asyncio.protocol.IntegerHeaderProtocol;
 import org.deadlock.id2212.asyncio.protocol.JsonProtocol;
 import org.deadlock.id2212.asyncio.protocol.MessageLengthProtocol;
 import org.junit.Before;
@@ -18,13 +20,16 @@ public class JsonProtocolTest {
 
   private AsyncIO asyncIO;
   private MessageLengthProtocol messageLengthProtocol;
+  private IntegerHeaderProtocol integerHeaderProtocol;
   private JsonProtocol jsonProtocol;
 
   @Before
   public void setUp() throws Exception {
     asyncIO = new TCPAsyncIO(5);
     messageLengthProtocol = new MessageLengthProtocol(asyncIO);
-    jsonProtocol = new JsonProtocol(messageLengthProtocol);
+    integerHeaderProtocol = new IntegerHeaderProtocol(messageLengthProtocol);
+    jsonProtocol = new JsonProtocol(integerHeaderProtocol);
+    jsonProtocol.registerType(1, TestJsonObject.class);
   }
 
   @Test
@@ -32,17 +37,17 @@ public class JsonProtocolTest {
     // Given
     // Connect + accept
     jsonProtocol.startServer(0).toCompletableFuture().get();
-    JsonClient connectedClient = jsonProtocol.connect(new InetSocketAddress(jsonProtocol.getListeningPort()))
+    IdJsonClient connectedClient = jsonProtocol.connect(new InetSocketAddress(jsonProtocol.getListeningPort()))
         .toCompletableFuture().get();
-    JsonClient acceptedClient = jsonProtocol.accept().toCompletableFuture().get();
+    IdJsonClient acceptedClient = jsonProtocol.accept().toCompletableFuture().get();
 
-    TestJsonMessage sentJsonMessage = new TestJsonMessage(123, "Test text");
+    TestJsonObject sentJsonMessage = new TestJsonObject(123, "Test text");
 
     // When
     connectedClient.send(sentJsonMessage).toCompletableFuture().get();
 
     // Then
-    TestJsonMessage receivedJsonMessage = acceptedClient.receive(TestJsonMessage.class).toCompletableFuture().get();
-    assertEquals(sentJsonMessage, receivedJsonMessage);
+    IdJsonMessage receivedJsonMessage = acceptedClient.receive().toCompletableFuture().get();
+    assertEquals(sentJsonMessage, receivedJsonMessage.getObject(TestJsonObject.class));
   }
 }

@@ -1,20 +1,20 @@
 package org.deadlock.id2212;
 
-public class TestJsonMessage {
+public class TestJsonObject {
   public int id;
   public String text;
 
-  public TestJsonMessage(int id, String text) {
+  public TestJsonObject(int id, String text) {
     this.id = id;
     this.text = text;
   }
 
-  public TestJsonMessage() {
+  public TestJsonObject() {
   }
 
   @Override
   public boolean equals(Object otherUnknown) {
-    final TestJsonMessage other = (TestJsonMessage) otherUnknown;
+    final TestJsonObject other = (TestJsonObject) otherUnknown;
     return id == other.id && text.equals(other.text);
   }
 }

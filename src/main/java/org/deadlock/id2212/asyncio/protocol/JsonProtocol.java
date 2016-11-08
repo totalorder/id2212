@@ -5,64 +5,72 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CompletionStage;
 
-public class JsonProtocol implements Protocol<JsonClient> {
-  private final MessageLengthProtocol messageLengthProtocol;
+public class JsonProtocol implements Protocol<IdJsonClient> {
+  private final IntegerHeaderProtocol integerHeaderProtocol;
   private final ObjectMapper mapper;
+  private final Map<Integer, Class> typeToClass = new HashMap<>();
+  private final Map<Class, Integer> classToType = new HashMap<>();
 
-  public JsonProtocol(final MessageLengthProtocol messageLengthProtocol) {
+  public JsonProtocol(final IntegerHeaderProtocol integerHeaderProtocol) {
     this.mapper = new ObjectMapper();
-    this.messageLengthProtocol = messageLengthProtocol;
+    this.integerHeaderProtocol = integerHeaderProtocol;
   }
 
-  class JsonProtocolClient implements JsonClient {
+  public void registerType(final int type, final Class clazz) {
+    typeToClass.put(type, clazz);
+    classToType.put(clazz, type);
+  }
 
-    private final BytesClient bytesClient;
+  class JsonProtocolClient implements IdJsonClient {
 
-    public JsonProtocolClient(final BytesClient bytesClient) {
-      this.bytesClient = bytesClient;
+    private final IntegerHeaderClient integerHeaderClient;
+
+    public JsonProtocolClient(final IntegerHeaderClient integerHeaderClient) {
+      this.integerHeaderClient = integerHeaderClient;
     }
 
     @Override
     public CompletionStage<Void> send(Object serializable) throws JsonProcessingException {
-      return bytesClient.send(mapper.writeValueAsBytes(serializable));
+      final Integer type = classToType.get(serializable.getClass());
+      if (type == null) {
+        throw new RuntimeException("Type for class " + serializable.getClass().getName() + " does not exists");
+      }
+      return integerHeaderClient.send(type, mapper.writeValueAsBytes(serializable));
     }
 
     @Override
-    public <T> CompletionStage<T> receive(Class<T> clazz) {
-      return bytesClient.receive().thenApply(bytes -> {
-        try {
-          return mapper.readValue(bytes, clazz);
-        } catch (IOException e) {
-          throw new RuntimeException(e);
-        }
-      });
+    public CompletionStage<IdJsonMessage> receive() {
+      return integerHeaderClient.receive().thenApply(message ->
+          new IdJsonMessage(mapper, typeToClass, message.getHeader(), message.getBytes()));
     }
   }
 
   @Override
-  public CompletionStage<JsonClient> accept() {
-    return messageLengthProtocol.accept().thenApply(JsonProtocolClient::new);
+  public CompletionStage<IdJsonClient> accept() {
+    return integerHeaderProtocol.accept().thenApply(JsonProtocolClient::new);
   }
 
   @Override
   public CompletionStage<Void> startServer(int port) {
-    return messageLengthProtocol.startServer(port);
+    return integerHeaderProtocol.startServer(port);
   }
 
   @Override
   public int getListeningPort() {
-    return messageLengthProtocol.getListeningPort();
+    return integerHeaderProtocol.getListeningPort();
   }
 
   @Override
-  public CompletionStage<JsonClient> connect(InetSocketAddress inetSocketAddress) {
-    return messageLengthProtocol.connect(inetSocketAddress).thenApply(JsonProtocolClient::new);
+  public CompletionStage<IdJsonClient> connect(InetSocketAddress inetSocketAddress) {
+    return integerHeaderProtocol.connect(inetSocketAddress).thenApply(JsonProtocolClient::new);
   }
 
   @Override
   public void close() throws IOException {
-    messageLengthProtocol.close();
+    integerHeaderProtocol.close();
   }
 }

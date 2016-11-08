@@ -4,8 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.util.concurrent.CompletionStage;
 
-public interface JsonClient {
+public interface JsonClient<MessageType> {
   CompletionStage<Void> send(final Object serializable) throws JsonProcessingException;
 
-  <T> CompletionStage<T> receive(final Class<T> clazz);
+  CompletionStage<MessageType> receive();
 }
