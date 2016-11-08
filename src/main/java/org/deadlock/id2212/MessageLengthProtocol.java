@@ -10,8 +10,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 
-public class MessageLengthProtocol implements Protocol {
-  public static class MessageLengthProtocolClient implements Client {
+public class MessageLengthProtocol implements Protocol<BytesClient> {
+  public static class MessageLengthProtocolClient implements BytesClient {
     private final AsyncIOClient asyncIOClient;
     private final AsyncQueue<ByteBuffer> receivedMessages = new AsyncQueue<>();
     private ByteBuffer lengthBuffer = ByteBuffer.allocateDirect(4);
@@ -80,11 +80,11 @@ public class MessageLengthProtocol implements Protocol {
   }
 
   @Override
-  public CompletionStage<Client> accept() {
+  public CompletionStage<BytesClient> accept() {
     return acceptedClients.remove().thenApply(this::createClient);
   }
 
-  private Client createClient(AsyncIOClient asyncIOClient) {
+  private BytesClient createClient(AsyncIOClient asyncIOClient) {
     final MessageLengthProtocolClient client = new MessageLengthProtocolClient(asyncIOClient);
     clientMap.put(asyncIOClient, client);
     return client;
@@ -101,7 +101,7 @@ public class MessageLengthProtocol implements Protocol {
   }
 
   @Override
-  public CompletionStage<Client> connect(final InetSocketAddress inetSocketAddress) {
+  public CompletionStage<BytesClient> connect(final InetSocketAddress inetSocketAddress) {
     return asyncIO.connect(inetSocketAddress).thenApply(this::createClient);
   }
 

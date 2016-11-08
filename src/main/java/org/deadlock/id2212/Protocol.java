@@ -4,7 +4,7 @@ import java.io.Closeable;
 import java.net.InetSocketAddress;
 import java.util.concurrent.CompletionStage;
 
-public interface Protocol extends Closeable {
+public interface Protocol<Client> extends Closeable {
   CompletionStage<Client> accept();
 
   CompletionStage<Void> startServer(int port);

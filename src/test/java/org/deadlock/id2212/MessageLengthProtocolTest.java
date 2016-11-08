@@ -41,7 +41,7 @@ public class MessageLengthProtocolTest {
 
     // Then
     assertTrue(connected);
-    final Client client = messageLengthProtocol.accept().toCompletableFuture().get();
+    final BytesClient client = messageLengthProtocol.accept().toCompletableFuture().get();
     assertNotNull(client);
   }
 
@@ -51,7 +51,7 @@ public class MessageLengthProtocolTest {
     messageLengthProtocol.startServer(0).toCompletableFuture().get();
 
     // When
-    Client client = messageLengthProtocol.connect(new InetSocketAddress(messageLengthProtocol.getListeningPort()))
+    BytesClient client = messageLengthProtocol.connect(new InetSocketAddress(messageLengthProtocol.getListeningPort()))
         .toCompletableFuture().get();
 
     // Then
@@ -63,9 +63,9 @@ public class MessageLengthProtocolTest {
     // Given
     // Connect + accept
     messageLengthProtocol.startServer(0).toCompletableFuture().get();
-    Client connectedClient = messageLengthProtocol.connect(new InetSocketAddress(messageLengthProtocol.getListeningPort()))
+    BytesClient connectedClient = messageLengthProtocol.connect(new InetSocketAddress(messageLengthProtocol.getListeningPort()))
         .toCompletableFuture().get();
-    Client acceptedClient = messageLengthProtocol.accept().toCompletableFuture().get();
+    BytesClient acceptedClient = messageLengthProtocol.accept().toCompletableFuture().get();
 
     // When
     connectedClient.send("Test message".getBytes("UTF-8")).toCompletableFuture().get();
