@@ -7,6 +7,7 @@ import org.deadlock.id2212.asyncio.protocol.IdJsonClient;
 import org.deadlock.id2212.asyncio.protocol.IntegerHeaderProtocol;
 import org.deadlock.id2212.asyncio.protocol.JsonProtocol;
 import org.deadlock.id2212.asyncio.protocol.MessageLengthProtocol;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -18,18 +19,17 @@ import static org.junit.Assert.*;
 
 public class JsonProtocolTest {
 
-  private AsyncIO asyncIO;
-  private MessageLengthProtocol messageLengthProtocol;
-  private IntegerHeaderProtocol integerHeaderProtocol;
   private JsonProtocol jsonProtocol;
 
   @Before
   public void setUp() throws Exception {
-    asyncIO = new TCPAsyncIO(5);
-    messageLengthProtocol = new MessageLengthProtocol(asyncIO);
-    integerHeaderProtocol = new IntegerHeaderProtocol(messageLengthProtocol);
-    jsonProtocol = new JsonProtocol(integerHeaderProtocol);
-    jsonProtocol.registerType(1, TestJsonObject.class);
+    jsonProtocol = JsonProtocol.createDefault();
+    jsonProtocol.registerType(TestJsonObject.class);
+  }
+
+  @After
+  public void tearDown() throws Exception {
+    jsonProtocol.close();
   }
 
   @Test

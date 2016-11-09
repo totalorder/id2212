@@ -21,7 +21,13 @@ public class TCPAsyncIO implements AsyncIO {
 
   @Override
   public void close() throws IOException {
-    closed = new CompletableFuture<>();
+    if (started == null) {
+      return;
+    }
+
+    if (closed == null) {
+      closed = new CompletableFuture<>();
+    }
     try {
       closed.get();
     } catch (InterruptedException | ExecutionException e) {
@@ -42,6 +48,7 @@ public class TCPAsyncIO implements AsyncIO {
     }
 
     private final SocketChannel channel;
+    private final Selector selector;
     private final ByteBuffer buffer;
     private int lastPosition = 0;
     private ConcurrentLinkedDeque<SendBuffer> sendBuffers = new ConcurrentLinkedDeque<>();
@@ -52,10 +59,20 @@ public class TCPAsyncIO implements AsyncIO {
      * to be called from only one thread. send() however is thread-safe.
      *
      * @param channel
+     * @param selector
      */
-    public TCPAsyncIOClient(final SocketChannel channel) {
+    public TCPAsyncIOClient(final SocketChannel channel, final Selector selector) {
       this.channel = channel;
+      this.selector = selector;
       buffer = ByteBuffer.allocateDirect(clientReceiveBufferSize);
+    }
+
+    public void readyToReadAndWrite() {
+      try {
+        channel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, this);
+      } catch (ClosedChannelException e) {
+        throw new RuntimeException(e);
+      }
     }
 
     protected void onIsReadable() throws IOException {
@@ -104,6 +121,11 @@ public class TCPAsyncIO implements AsyncIO {
       final CompletableFuture<Void> sentFuture = new CompletableFuture<>();
       sendBuffers.addLast(new SendBuffer(sentFuture, byteBuffer));
       return sentFuture.thenCompose(ignored -> ensureStarted());
+    }
+
+    @Override
+    public InetSocketAddress getAddress() {
+      return (InetSocketAddress)channel.socket().getRemoteSocketAddress();
     }
   }
 
@@ -181,11 +203,8 @@ public class TCPAsyncIO implements AsyncIO {
   }
 
   private TCPAsyncIOClient createClient(final SocketChannel clientChannel) throws IOException {
-    final TCPAsyncIOClient client = new TCPAsyncIOClient(clientChannel);
-
     clientChannel.configureBlocking(false);
-    clientChannel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, client);
-    return client;
+    return new TCPAsyncIOClient(clientChannel, selector);
   }
 
   private synchronized CompletionStage<Void> ensureStarted() {
@@ -229,25 +248,27 @@ public class TCPAsyncIO implements AsyncIO {
 
   @Override
   public CompletionStage<AsyncIOClient> connect(final InetSocketAddress address) {
-    final CompletableFuture<Void> clientConnectedFuture = new CompletableFuture<>();
+    return ensureStarted().thenCompose(ignore -> {
+      final CompletableFuture<Void> clientConnectedFuture = new CompletableFuture<>();
 
-    final SocketChannel channel;
-    try {
-      channel = SocketChannel.open();
-      channel.configureBlocking(true);
-      channel.connect(address);
-      awaitConnection(channel, clientConnectedFuture);
-    } catch (IOException e) {
-      clientConnectedFuture.completeExceptionally(new RuntimeException(e));
-      return clientConnectedFuture.thenApply(ignored -> null);
-    }
-
-    return clientConnectedFuture.thenApply(ignored -> {
+      final SocketChannel channel;
       try {
-        return createClient(channel);
+        channel = SocketChannel.open();
+        channel.configureBlocking(true);
+        channel.connect(address);
+        awaitConnection(channel, clientConnectedFuture);
       } catch (IOException e) {
-        throw new RuntimeException(e);
+        clientConnectedFuture.completeExceptionally(new RuntimeException(e));
+        return clientConnectedFuture.thenApply(ignored -> null);
       }
+
+      return clientConnectedFuture.thenApply(ignored -> {
+        try {
+          return createClient(channel);
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
+      });
     });
   }
 

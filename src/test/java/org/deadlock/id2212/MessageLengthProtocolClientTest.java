@@ -1,10 +1,13 @@
 package org.deadlock.id2212;
 
+import org.deadlock.id2212.asyncio.AsyncIO;
+import org.deadlock.id2212.asyncio.AsyncIOClient;
 import org.deadlock.id2212.asyncio.protocol.MessageLengthProtocol;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.io.UnsupportedEncodingException;
+import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -18,13 +21,26 @@ public class MessageLengthProtocolClientTest {
 
   @Before
   public void setUp() throws Exception {
-    client = new MessageLengthProtocol.MessageLengthProtocolClient(this::send);
+    AsyncIOClient loopbackClient = new AsyncIOClient() {
+      public CompletionStage<Void> send(final ByteBuffer byteBuffer) {
+        client.onDataReceived(byteBuffer);
+        return new CompletableFuture<>();
+      }
+
+      @Override
+      public InetSocketAddress getAddress() {
+        return null;
+      }
+
+      @Override
+      public void readyToReadAndWrite() {
+      }
+    };
+
+    client = new MessageLengthProtocol.MessageLengthProtocolClient(loopbackClient);
   }
 
-  private CompletionStage<Void> send(final ByteBuffer byteBuffer) {
-    client.onDataReceived(byteBuffer);
-    return new CompletableFuture<>();
-  }
+
 
   @Test
   public void canSendAndReceive() throws UnsupportedEncodingException, ExecutionException, InterruptedException {

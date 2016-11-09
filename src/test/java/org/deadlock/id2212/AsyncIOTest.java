@@ -42,6 +42,7 @@ public class AsyncIOTest {
   public void setUp() throws Exception {
     clientAcceptedCallback = client -> {
       acceptedClients.add(client);
+      client.readyToReadAndWrite();
       acceptLatch.countDown();
     };
 
@@ -153,6 +154,7 @@ public class AsyncIOTest {
     asyncIO.startServer(0, clientAcceptedCallback).toCompletableFuture().get();
     AsyncIOClient client = asyncIO.connect(new InetSocketAddress(asyncIO.getListeningPort()))
         .toCompletableFuture().get();
+    client.readyToReadAndWrite();
     acceptLatch.await(1, TimeUnit.SECONDS);
 
     // When
@@ -174,8 +176,10 @@ public class AsyncIOTest {
     asyncIO.startServer(0, clientAcceptedCallback).toCompletableFuture().get();
     AsyncIOClient connectedClient = asyncIO.connect(new InetSocketAddress(asyncIO.getListeningPort()))
         .toCompletableFuture().get();
+    connectedClient.readyToReadAndWrite();
     acceptLatch.await(1, TimeUnit.SECONDS);
     AsyncIOClient acceptedClient = acceptedClients.get(0);
+    acceptedClient.readyToReadAndWrite();
 
     // Connected writes C --> A
     connectedClient.send(utf8BufferFromString("Test data")).toCompletableFuture().get();

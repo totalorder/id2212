@@ -9,4 +9,8 @@ public class IntegerHeaderProtocol extends HeaderProtocol<IntegerHeaderClient> {
   IntegerHeaderClient createClient(final BytesClient bytesClient) {
     return new IntegerHeaderProtocolClient(bytesClient);
   }
+
+  public static IntegerHeaderProtocol createDefault() {
+    return new IntegerHeaderProtocol(MessageLengthProtocol.createDefault());
+  }
 }

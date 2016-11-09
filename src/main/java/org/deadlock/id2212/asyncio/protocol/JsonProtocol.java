@@ -14,15 +14,22 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
   private final ObjectMapper mapper;
   private final Map<Integer, Class> typeToClass = new HashMap<>();
   private final Map<Class, Integer> classToType = new HashMap<>();
+  private int nextTypeId = 0;
 
   public JsonProtocol(final IntegerHeaderProtocol integerHeaderProtocol) {
     this.mapper = new ObjectMapper();
     this.integerHeaderProtocol = integerHeaderProtocol;
   }
 
-  public void registerType(final int type, final Class clazz) {
-    typeToClass.put(type, clazz);
-    classToType.put(clazz, type);
+  public int registerType(final Class clazz) {
+    nextTypeId++;
+    typeToClass.put(nextTypeId, clazz);
+    classToType.put(clazz, nextTypeId);
+    return nextTypeId;
+  }
+
+  public static JsonProtocol createDefault() {
+    return new JsonProtocol(IntegerHeaderProtocol.createDefault());
   }
 
   class JsonProtocolClient implements IdJsonClient {
@@ -34,18 +41,27 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
     }
 
     @Override
-    public CompletionStage<Void> send(Object serializable) throws JsonProcessingException {
+    public CompletionStage<Void> send(Object serializable) {
       final Integer type = classToType.get(serializable.getClass());
       if (type == null) {
         throw new RuntimeException("Type for class " + serializable.getClass().getName() + " does not exists");
       }
-      return integerHeaderClient.send(type, mapper.writeValueAsBytes(serializable));
+      try {
+        return integerHeaderClient.send(type, mapper.writeValueAsBytes(serializable));
+      } catch (JsonProcessingException e) {
+        throw new RuntimeException(e);
+      }
     }
 
     @Override
     public CompletionStage<IdJsonMessage> receive() {
       return integerHeaderClient.receive().thenApply(message ->
           new IdJsonMessage(mapper, typeToClass, message.getHeader(), message.getBytes()));
+    }
+
+    @Override
+    public InetSocketAddress getAddress() {
+      return integerHeaderClient.getAddress();
     }
   }
 

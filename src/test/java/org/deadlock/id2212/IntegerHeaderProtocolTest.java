@@ -6,6 +6,7 @@ import org.deadlock.id2212.asyncio.protocol.HeadedMessage;
 import org.deadlock.id2212.asyncio.protocol.MessageLengthProtocol;
 import org.deadlock.id2212.asyncio.protocol.IntegerHeaderClient;
 import org.deadlock.id2212.asyncio.protocol.IntegerHeaderProtocol;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -26,6 +27,11 @@ public class IntegerHeaderProtocolTest {
     asyncIO = new TCPAsyncIO(5);
     messageLengthProtocol = new MessageLengthProtocol(asyncIO);
     integerHeaderProtocol = new IntegerHeaderProtocol(messageLengthProtocol);
+  }
+
+  @After
+  public void tearDown() throws Exception {
+    integerHeaderProtocol.close();
   }
 
   @Test

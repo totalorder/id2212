@@ -3,6 +3,7 @@ package org.deadlock.id2212.asyncio.protocol;
 import org.deadlock.id2212.asyncio.AsyncQueue;
 import org.deadlock.id2212.asyncio.AsyncIO;
 import org.deadlock.id2212.asyncio.AsyncIOClient;
+import org.deadlock.id2212.asyncio.TCPAsyncIO;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -12,6 +13,10 @@ import java.util.Map;
 import java.util.concurrent.CompletionStage;
 
 public class MessageLengthProtocol implements Protocol<BytesClient> {
+  public static MessageLengthProtocol createDefault() {
+    return new MessageLengthProtocol(new TCPAsyncIO());
+  }
+
   public static class MessageLengthProtocolClient implements BytesClient {
     private final AsyncIOClient asyncIOClient;
     private final AsyncQueue<ByteBuffer> receivedMessages = new AsyncQueue<>();
@@ -77,6 +82,11 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
         return bytes;
       });
     }
+
+    @Override
+    public InetSocketAddress getAddress() {
+      return asyncIOClient.getAddress();
+    }
   }
 
   private final AsyncIO asyncIO;
@@ -96,6 +106,7 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
   private BytesClient createClient(AsyncIOClient asyncIOClient) {
     final MessageLengthProtocolClient client = new MessageLengthProtocolClient(asyncIOClient);
     clientMap.put(asyncIOClient, client);
+    asyncIOClient.readyToReadAndWrite();
     return client;
   }
 

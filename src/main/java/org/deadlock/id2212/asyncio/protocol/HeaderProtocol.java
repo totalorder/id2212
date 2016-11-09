@@ -31,6 +31,11 @@ public abstract class HeaderProtocol<ClientInterface> implements Protocol<Client
     public CompletionStage<HeadedMessage<Header>> receive() {
       return bytesClient.receive().thenApply(this::deserializeHeader);
     }
+
+    @Override
+    public InetSocketAddress getAddress() {
+      return bytesClient.getAddress();
+    }
   }
 
   public HeaderProtocol(final MessageLengthProtocol messageLengthProtocol) {

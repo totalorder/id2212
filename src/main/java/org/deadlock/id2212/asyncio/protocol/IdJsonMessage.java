@@ -13,10 +13,18 @@ public class IdJsonMessage extends HeadedJson<Integer> {
     this.typeToClass = typeToClass;
   }
 
-  public <T> T getObject(final Class<T> clazz) throws IOException {
+  public boolean isClass(final Class clazz) {
+    return clazz.equals(typeToClass.get(header));
+  }
+
+  public <T> T getObject(final Class<T> clazz) {
     if (!clazz.equals(typeToClass.get(header))) {
       throw new RuntimeException("Class for type" + header + " does not exists");
     }
-    return super.getObject(clazz);
+    try {
+      return super.getObject(clazz);
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
   }
 }
