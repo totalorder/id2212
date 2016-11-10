@@ -12,22 +12,35 @@ public class AsyncQueue<T> {
   public AsyncQueue() {
   }
 
-  private synchronized void update() {
-    if (incoming.peek() != null && requested.peek() != null) {
-      final T element = incoming.remove();
-      final CompletableFuture<T> future = requested.remove();
+  private void update() {
+    T element = null;
+    CompletableFuture<T> future = null;
+    synchronized (incoming) {
+      synchronized (requested) {
+        if (incoming.peek() != null && requested.peek() != null) {
+          element = incoming.remove();
+          future = requested.remove();
+        }
+      }
+    }
+
+    if (element != null) {
       future.complete(element);
     }
   }
 
-  public synchronized void add(T element) {
-    incoming.add(element);
+  public void add(T element) {
+    synchronized (incoming) {
+      incoming.add(element);
+    }
     update();
   }
 
-  public synchronized CompletionStage<T> remove() {
+  public CompletionStage<T> remove() {
     final CompletableFuture<T> future = new CompletableFuture<>();
-    requested.add(future);
+    synchronized (requested) {
+      requested.add(future);
+    }
     update();
     return future;
   }

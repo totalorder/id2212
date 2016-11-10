@@ -99,10 +99,15 @@ public class OverlayTest {
     overlay1ExpectedKnownPeers.add(overlay2.getUUID());
     overlay1ExpectedKnownPeers.add(overlay3.getUUID());
     assertEquals(overlay1ExpectedKnownPeers, overlay1.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
-    assertEquals(overlay2.getKnownPeers().peerInfos, overlay3.getKnownPeers().peerInfos);
-    assertEquals(overlay1.getKnownPeers().peerInfos, overlay3.getKnownPeers().peerInfos);
-    assertEquals(3, overlay1.getKnownPeers().peerInfos.size());
-    assertEquals(3, overlay2.getKnownPeers().peerInfos.size());
-    assertEquals(3, overlay3.getKnownPeers().peerInfos.size());
+
+    final Set<UUID> overlay2ExpectedKnownPeers = new HashSet<>();
+    overlay2ExpectedKnownPeers.add(overlay1.getUUID());
+    overlay2ExpectedKnownPeers.add(overlay3.getUUID());
+    assertEquals(overlay2ExpectedKnownPeers, overlay2.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
+
+    final Set<UUID> overlay3ExpectedKnownPeers = new HashSet<>();
+    overlay3ExpectedKnownPeers.add(overlay1.getUUID());
+    overlay3ExpectedKnownPeers.add(overlay2.getUUID());
+    assertEquals(overlay3ExpectedKnownPeers, overlay3.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
   }
 }
