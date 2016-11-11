@@ -27,7 +27,6 @@ public class Peer {
     return jsonClient.receive();
   }
 
-
   public PeerInfo getPeerInfo() {
     final InetSocketAddress listeningAddress = new InetSocketAddress(
         jsonClient.getAddress().getAddress(), listeningPort);

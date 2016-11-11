@@ -16,9 +16,10 @@ public class ScheduleManager {
   public CompletionStage<String> findTime(final int port, final Schedule mySchedule) {
     this.port = port;
     this.mySchedule = mySchedule;
-    return overlay.listen(port).thenCompose(ignored -> {
-      return acceptUntilFoundTime();
-    });
+//    return overlay.listen(port).thenCompose(ignored -> {
+//      return acceptUntilFoundTime();
+//    });
+    return null;
   }
 
   private CompletionStage<String> acceptUntilFoundTime() {

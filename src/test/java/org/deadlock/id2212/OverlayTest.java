@@ -1,6 +1,5 @@
 package org.deadlock.id2212;
 
-import org.deadlock.id2212.messages.PeerInfo;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -18,15 +17,16 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
 public class OverlayTest {
-  private Overlay overlay1;
-  private Overlay overlay2;
-  private Overlay overlay3;
+  private PeerExchangeOverlay overlay1;
+  private PeerExchangeOverlay overlay2;
+  private PeerExchangeOverlay overlay3;
+  private Overlay overlay4;
 
   @Before
   public void setUp() throws Exception {
-    overlay1 = Overlay.createDefault();
-    overlay2 = Overlay.createDefault();
-    overlay3 = Overlay.createDefault();
+    overlay1 = PeerExchangeOverlay.createDefault();
+    overlay2 = PeerExchangeOverlay.createDefault();
+    overlay3 = PeerExchangeOverlay.createDefault();
   }
 
   @After
@@ -84,17 +84,55 @@ public class OverlayTest {
     final CompletionStage<Void> peersAnnounced1 = overlay1.announceKnownPeers();
     final CompletionStage<Void> peersAnnounced2 = overlay2.announceKnownPeers();
     final CompletionStage<Void> peersAnnounced3 = overlay3.announceKnownPeers();
-    overlay1.receiveMessages();
-    overlay2.receiveMessages();
-    overlay3.receiveMessages();
     peersAnnounced1.toCompletableFuture().get();
     peersAnnounced2.toCompletableFuture().get();
     peersAnnounced3.toCompletableFuture().get();
+
+    overlay1.waitForConnectedPeers(2).toCompletableFuture().get();
+    overlay2.waitForConnectedPeers(2).toCompletableFuture().get();
+    overlay3.waitForConnectedPeers(2).toCompletableFuture().get();
 
     // Then
     // Peer 3 should be connected after exchange
     final Peer connectedPeer3 = connectedPeer3Future.toCompletableFuture().get();
 
+    final Set<UUID> overlay1ExpectedKnownPeers = new HashSet<>();
+    overlay1ExpectedKnownPeers.add(overlay2.getUUID());
+    overlay1ExpectedKnownPeers.add(overlay3.getUUID());
+    assertEquals(overlay1ExpectedKnownPeers, overlay1.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
+
+    final Set<UUID> overlay2ExpectedKnownPeers = new HashSet<>();
+    overlay2ExpectedKnownPeers.add(overlay1.getUUID());
+    overlay2ExpectedKnownPeers.add(overlay3.getUUID());
+    assertEquals(overlay2ExpectedKnownPeers, overlay2.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
+
+    final Set<UUID> overlay3ExpectedKnownPeers = new HashSet<>();
+    overlay3ExpectedKnownPeers.add(overlay1.getUUID());
+    overlay3ExpectedKnownPeers.add(overlay2.getUUID());
+    assertEquals(overlay3ExpectedKnownPeers, overlay3.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
+  }
+
+  @Test
+  public void twoStartedConnectedKnowsEachOther() throws ExecutionException, InterruptedException, IOException {
+    // Given
+    overlay1.start(0);
+    overlay2.start(0);
+    overlay3.start(0);
+    System.out.println(overlay1.getUUID() + " " + overlay1.getListeningPort());
+    System.out.println(overlay2.getUUID() + " " + overlay2.getListeningPort());
+    System.out.println(overlay3.getUUID() + " " + overlay3.getListeningPort());
+
+    // When
+    // Connect peer 2 -> peer 1
+    overlay2.connect(new InetSocketAddress(overlay1.getListeningPort()));
+    // Connect peer 3 -> peer 1
+    overlay3.connect(new InetSocketAddress(overlay1.getListeningPort()));
+
+    overlay1.waitForConnectedPeers(2).toCompletableFuture().get();
+    overlay2.waitForConnectedPeers(2).toCompletableFuture().get();
+    overlay3.waitForConnectedPeers(2).toCompletableFuture().get();
+
+    // Then
     final Set<UUID> overlay1ExpectedKnownPeers = new HashSet<>();
     overlay1ExpectedKnownPeers.add(overlay2.getUUID());
     overlay1ExpectedKnownPeers.add(overlay3.getUUID());
