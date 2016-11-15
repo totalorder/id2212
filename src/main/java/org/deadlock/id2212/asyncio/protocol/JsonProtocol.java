@@ -2,6 +2,7 @@ package org.deadlock.id2212.asyncio.protocol;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -17,7 +18,7 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
   private int nextTypeId = 0;
 
   public JsonProtocol(final IntegerHeaderProtocol integerHeaderProtocol) {
-    this.mapper = new ObjectMapper();
+    this.mapper = new ObjectMapper().registerModule(new JavaTimeModule());
     this.integerHeaderProtocol = integerHeaderProtocol;
   }
 

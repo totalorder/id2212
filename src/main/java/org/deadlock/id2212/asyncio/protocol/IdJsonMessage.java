@@ -13,8 +13,13 @@ public class IdJsonMessage extends HeadedJson<Integer> {
     this.typeToClass = typeToClass;
   }
 
-  public boolean isClass(final Class clazz) {
-    return clazz.equals(typeToClass.get(header));
+  public boolean isClass(final Class... classes) {
+    for (Class clazz : classes) {
+      if (clazz.equals(typeToClass.get(header))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   public <T> T getObject(final Class<T> clazz) {

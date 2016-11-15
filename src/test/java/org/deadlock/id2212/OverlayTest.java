@@ -1,5 +1,8 @@
 package org.deadlock.id2212;
 
+import org.deadlock.id2212.overlay.Overlay;
+import org.deadlock.id2212.overlay.Peer;
+import org.deadlock.id2212.overlay.PeerExchangeOverlay;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;

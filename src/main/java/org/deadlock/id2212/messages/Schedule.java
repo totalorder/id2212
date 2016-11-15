@@ -4,6 +4,9 @@ import java.time.Instant;
 import java.util.List;
 
 public class Schedule {
-  String name;
-  List<Instant> availableTimes;
+  public Schedule() {
+  }
+
+  public String name;
+  public List<Instant> availableTimes;
 }

@@ -1,10 +1,11 @@
-package org.deadlock.id2212;
+package org.deadlock.id2212.overlay;
 
 import org.deadlock.id2212.asyncio.protocol.IdJsonClient;
+import org.deadlock.id2212.asyncio.protocol.IdJsonMessage;
 import org.deadlock.id2212.asyncio.protocol.JsonProtocol;
-import org.deadlock.id2212.messages.KnownPeers;
-import org.deadlock.id2212.messages.PeerId;
-import org.deadlock.id2212.messages.PeerInfo;
+import org.deadlock.id2212.overlay.messages.KnownPeers;
+import org.deadlock.id2212.overlay.messages.PeerId;
+import org.deadlock.id2212.overlay.messages.PeerInfo;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -20,19 +21,21 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
 
 public class PeerExchangeOverlay implements Overlay {
   private final JsonProtocol jsonProtocol;
-  private final List<Peer> peers = new LinkedList<>();
+  private final List<PeerExchangePeer> peers = new LinkedList<>();
   private final UUID uuid;
   private final List<CompletionStage<Void>> peersReceivingFutures = new LinkedList<>();
   private final Map<Integer, CompletableFuture<Void>> waitingForConnections = new HashMap<>();
   private volatile CompletableFuture<Void> started = null;
   private CompletableFuture<Void> acceptingForeverFuture;
   private ScheduledExecutorService scheduledExecutorService;
+  private BiConsumer<Peer, IdJsonMessage> onMessageReceivedCallback;
 
   public PeerExchangeOverlay(final JsonProtocol jsonProtocol) {
     this.jsonProtocol = jsonProtocol;
@@ -54,7 +57,7 @@ public class PeerExchangeOverlay implements Overlay {
         .thenApply(this::startReceivingMessages);
   }
 
-  private CompletionStage<Peer> exchangePeerId(final IdJsonClient jsonClient) {
+  private CompletionStage<PeerExchangePeer> exchangePeerId(final IdJsonClient jsonClient) {
     // Send local peer id to remote peer
     return jsonClient.send(getPeerId())
         .thenCompose(ignored ->
@@ -81,7 +84,7 @@ public class PeerExchangeOverlay implements Overlay {
     return peer.send(getKnownPeers());
   }
 
-  private Peer startReceivingMessages(final Peer peer) {
+  private Peer startReceivingMessages(final PeerExchangePeer peer) {
     final CompletionStage<Void> receivingForeverFuture = receiveMessagesForever(peer);
     synchronized (peersReceivingFutures) {
       peersReceivingFutures.add(receivingForeverFuture);
@@ -89,8 +92,8 @@ public class PeerExchangeOverlay implements Overlay {
     return peer;
   }
 
-  private CompletionStage<Void> receiveMessagesForever(final Peer peer) {
-    return peer.receive().thenCompose(jsonMessage -> {
+  private CompletionStage<Void> receiveMessagesForever(final PeerExchangePeer peer) {
+    return peer.receiveInternal().thenCompose(jsonMessage -> {
       if (jsonMessage.isClass(KnownPeers.class)) {
         return acceptPeerAnnouncement(jsonMessage.getObject(KnownPeers.class))
             .thenCompose(ignored -> receiveMessagesForever(peer));
@@ -177,8 +180,8 @@ public class PeerExchangeOverlay implements Overlay {
     return jsonProtocol.startServer(port);
   }
 
-  private Peer createPeer(final PeerId peerId, final IdJsonClient jsonClient) {
-    final Peer peer = new Peer(peerId.uuid, peerId.listeningPort, jsonClient);
+  private PeerExchangePeer createPeer(final PeerId peerId, final IdJsonClient jsonClient) {
+    final PeerExchangePeer peer = new PeerExchangePeer(peerId.uuid, peerId.listeningPort, jsonClient, onMessageReceivedCallback);
     synchronized (peers) {
       peers.add(peer);
       final CompletableFuture<Void> peersConnected = waitingForConnections.get(peers.size());
@@ -191,7 +194,7 @@ public class PeerExchangeOverlay implements Overlay {
 
   public KnownPeers getKnownPeers() {
     synchronized (peers) {
-      return new KnownPeers( peers.stream().map(Peer::getPeerInfo).collect(Collectors.toSet()));
+      return new KnownPeers( peers.stream().map(peer -> peer.getPeerInfo()).collect(Collectors.toSet()));
     }
   }
 
@@ -205,6 +208,26 @@ public class PeerExchangeOverlay implements Overlay {
 
   public int getListeningPort() {
     return jsonProtocol.getListeningPort();
+  }
+
+  @Override
+  public List<CompletionStage<Peer>> broadcast(final Object message) {
+    synchronized (peers) {
+      return peers.stream()
+          .map(peer -> peer.send(message)
+              .thenApply(ignored -> (Peer) peer))
+          .collect(Collectors.toList());
+    }
+  }
+
+  @Override
+  public int registerType(Class clazz) {
+    return jsonProtocol.registerType(clazz);
+  }
+
+  @Override
+  public void setOnMessageReceivedCallback(BiConsumer<Peer, IdJsonMessage> callback) {
+    this.onMessageReceivedCallback = callback;
   }
 
   @Override

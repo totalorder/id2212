@@ -1,4 +1,4 @@
-package org.deadlock.id2212.messages;
+package org.deadlock.id2212.overlay.messages;
 
 import java.net.InetSocketAddress;
 import java.util.UUID;
