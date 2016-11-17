@@ -27,6 +27,11 @@ import java.util.stream.Collectors;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
 
+/**
+ * Peer-to-peer overlay that automatically connects all discoverable
+ * peers in a mesh. Enables broadcasting. Supports notification when
+ * N peers are discovered with waitForConnectedPeers().
+ */
 public class PeerExchangeOverlay implements Overlay {
   private final JsonProtocol jsonProtocol;
   private final List<PeerExchangePeer> peers = new LinkedList<>();
@@ -49,6 +54,7 @@ public class PeerExchangeOverlay implements Overlay {
 
   @Override
   public CompletionStage<Peer> connect(InetSocketAddress inetSocketAddress) {
+    // Connect, exchange ids, start receiving
     return jsonProtocol.connect(inetSocketAddress)
       .thenCompose(this::exchangePeerId)
       .thenApply(peer -> {
@@ -61,6 +67,7 @@ public class PeerExchangeOverlay implements Overlay {
   }
 
   public CompletionStage<Peer> accept() {
+    // Accept, exchange ids, start receiving
     return jsonProtocol.accept()
         .thenCompose(this::exchangePeerId)
         .thenApply(peer -> {
@@ -72,6 +79,9 @@ public class PeerExchangeOverlay implements Overlay {
         .thenApply(this::startReceivingMessages);
   }
 
+  /**
+   * Exchange peer-id with remote peer
+   */
   private CompletionStage<PeerExchangePeer> exchangePeerId(final IdJsonClient jsonClient) {
     // Send local peer id to remote peer
     return jsonClient.send(getPeerId())
@@ -83,9 +93,13 @@ public class PeerExchangeOverlay implements Overlay {
             createPeer(jsonMessage.getObject(PeerId.class), jsonClient));
   }
 
+  /**
+   * Announce the known peers to all other peers
+   */
   public CompletionStage<Void> announceKnownPeers() {
     List<CompletableFuture<Void>> peerAnnouncedToFutures;
     synchronized (peers) {
+      // Announce known peers to all connected peers
       peerAnnouncedToFutures = peers.stream()
           .map(this::announceKnownPeers)
           .map(CompletionStage::toCompletableFuture)
@@ -99,6 +113,9 @@ public class PeerExchangeOverlay implements Overlay {
     return peer.send(getKnownPeers());
   }
 
+  /**
+   * Receive messages forever
+   */
   private Peer startReceivingMessages(final PeerExchangePeer peer) {
     final CompletionStage<Void> receivingForeverFuture = receiveMessagesForever(peer);
     synchronized (peersReceivingFutures) {
@@ -107,8 +124,12 @@ public class PeerExchangeOverlay implements Overlay {
     return peer;
   }
 
+  /**
+   * Hand peer announcement messages to acceptPeerAnnouncement()
+   */
   private CompletionStage<Void> receiveMessagesForever(final PeerExchangePeer peer) {
     return peer.receiveInternal().thenCompose(jsonMessage -> {
+      // Handle KnownPeers message, ignore others
       if (jsonMessage.isClass(KnownPeers.class)) {
         return acceptPeerAnnouncement(jsonMessage.getObject(KnownPeers.class))
             .thenCompose(ignored -> receiveMessagesForever(peer));
@@ -138,6 +159,7 @@ public class PeerExchangeOverlay implements Overlay {
   }
 
   private void announceKnownPeersForever() {
+    // Announce known peers to all connected peers every second
     scheduledExecutorService.schedule(() -> {
       if (started != null) {
         started.complete(null);
@@ -153,13 +175,18 @@ public class PeerExchangeOverlay implements Overlay {
     }, 1, TimeUnit.SECONDS);
   }
 
+  /**
+   * Return a future that completes when N peers are connected
+   */
   @Override
   public CompletionStage<Void> waitForConnectedPeers(final int numberOfPeers) {
     synchronized (waitingForConnections) {
+      // Get or create a future corresponding to numberOfPeers
       if (waitingForConnections.get(numberOfPeers) == null) {
         final CompletableFuture<Void> peersConnected = new CompletableFuture<>();
         waitingForConnections.put(numberOfPeers, peersConnected);
         synchronized (peers) {
+          // Complete immediately if already correct number of peers
           if (peers.size() == numberOfPeers) {
             peersConnected.complete(null);
           }
@@ -169,6 +196,10 @@ public class PeerExchangeOverlay implements Overlay {
     }
   }
 
+  /**
+   * Find any new peers that are not connected. If local uuid > remote uuid, connect to
+   * the remote peer.
+   */
   private CompletionStage<Void> acceptPeerAnnouncement(final KnownPeers knownPeers) {
           final Set<PeerInfo> newKnownPeers = knownPeers.peerInfos
               // Filter out self
@@ -178,6 +209,8 @@ public class PeerExchangeOverlay implements Overlay {
           // Find new peers not known before
           newKnownPeers.removeAll(existingKnownPeers);
 
+          // Filter out all peers with a lower uuid than self, to avoid connecting from
+          // both sides
           final Set<PeerInfo> peersToConnectTo = newKnownPeers.stream()
               .filter(peerInfo -> peerInfo.uuid.compareTo(uuid) > 0)
               .collect(Collectors.toSet());
@@ -203,6 +236,7 @@ public class PeerExchangeOverlay implements Overlay {
     final PeerExchangePeer peer = new PeerExchangePeer(peerId.uuid, peerId.listeningPort, jsonClient, onMessageReceivedCallback);
     synchronized (peers) {
       peers.add(peer);
+      // Notify any listeners that N peers are connected
       final CompletableFuture<Void> peersConnected = waitingForConnections.get(peers.size());
       if (peersConnected != null) {
         peersConnected.complete(null);

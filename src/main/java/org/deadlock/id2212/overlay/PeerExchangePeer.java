@@ -12,6 +12,10 @@ import java.util.UUID;
 import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 
+/**
+ * Receive messages and put overlay-specific messages in a specific queue, while
+ * exposing other messages to the client.
+ */
 public class PeerExchangePeer implements Peer {
   private final UUID uuid;
   private final int listeningPort;
@@ -39,6 +43,7 @@ public class PeerExchangePeer implements Peer {
   }
 
   private void ensureReceiving() {
+    // Make sure to always receive messages
     if (receiving == null) {
       jsonClient.receive().thenApply(message -> {
             ensureReceiving();
@@ -49,10 +54,11 @@ public class PeerExchangePeer implements Peer {
   }
 
   private synchronized Void onMessageReceived(final IdJsonMessage message) {
+    // Put internal messages on internalMessages queue, others on messages queue
     if (message.isClass(KnownPeers.class, PeerId.class, PeerInfo.class)) {
       internalMessages.add(message);
     } else {
-
+      // Notify client that message is received
       if (onMessageReceivedCallback != null) {
         onMessageReceivedCallback.accept(this, message);
       }

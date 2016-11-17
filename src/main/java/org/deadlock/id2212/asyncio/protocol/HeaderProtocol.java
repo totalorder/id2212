@@ -4,6 +4,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.concurrent.CompletionStage;
 
+/**
+ * Enable sending and receiving messages with a header of an arbitrary type. The subclasses
+ * must implement serializing and deserializing of the header.
+ */
 public abstract class HeaderProtocol<ClientInterface> implements Protocol<ClientInterface> {
   private final MessageLengthProtocol messageLengthProtocol;
 
@@ -17,6 +21,7 @@ public abstract class HeaderProtocol<ClientInterface> implements Protocol<Client
 
     @Override
     public CompletionStage<Void> send(final Header header, byte[] bytes) {
+      // Send the serialized data
       final byte[] headerData = serializeHeader(header);
       return bytesClient.send(
           headerData,
@@ -29,6 +34,7 @@ public abstract class HeaderProtocol<ClientInterface> implements Protocol<Client
 
     @Override
     public CompletionStage<HeadedMessage<Header>> receive() {
+      // Return the deserialized data
       return bytesClient.receive().thenApply(this::deserializeHeader);
     }
 

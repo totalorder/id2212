@@ -10,6 +10,14 @@ import java.util.concurrent.*;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+/**
+ * Listens to connections and receives data using a java.nio.channels.Selector,
+ * providing accepted connections and received data using callbacks.
+ * Enable connecting to remote servers
+ * Enable sending data
+ *
+ * Data received has to be read immediately to be sure that the buffer has not been overwritten
+ */
 public class TCPAsyncIO implements AsyncIO {
   private final Selector selector;
   private final int clientReceiveBufferSize;
@@ -55,7 +63,12 @@ public class TCPAsyncIO implements AsyncIO {
     private volatile SendBuffer currentlyWriting = null;
 
     /**
-     * NOTE: TCPAsyncIOClient is currently not thread safe. onIsReadable() and onIsWritable() is expected
+     * Calls data received callback when data is received
+     * Enables sending data
+     *
+     * Data received has to be read immediately to be sure that the buffer has not been overwritten
+     *
+     * NOTE: TCPAsyncIOClient is not thread safe. onIsReadable() and onIsWritable() is expected
      * to be called from only one thread. send() however is thread-safe.
      *
      * @param channel
@@ -75,6 +88,10 @@ public class TCPAsyncIO implements AsyncIO {
       }
     }
 
+    /**
+     * Read data from channel into a buffer. Call clientDataReceivedCallback with a
+     * read-only slice of the buffer, representing the data read.
+     */
     protected void onIsReadable() throws IOException {
       boolean receivedData = false;
       while (buffer.hasRemaining() && channel.read(buffer) > 0) {
@@ -82,6 +99,7 @@ public class TCPAsyncIO implements AsyncIO {
       }
 
       if (receivedData) {
+        // Create a read-only slice with a view of the data to be read
         final ByteBuffer readOnlySlice = buffer.asReadOnlyBuffer();
         readOnlySlice.position(lastPosition);
         readOnlySlice.limit(buffer.position());
@@ -96,7 +114,13 @@ public class TCPAsyncIO implements AsyncIO {
       }
     }
 
+    /**
+     * Write data from active buffer to channel. If buffer is written, try to
+     * pop a new buffer from the queue and make it active.
+     * Notify client that all data has been written by completing the corresponding future.
+     */
     protected void onIsWritable() throws IOException {
+      // Pop a new message for writing if there is not an active one and a new is available
       if (currentlyWriting == null && !sendBuffers.isEmpty()) {
         try {
           currentlyWriting = sendBuffers.removeFirst();
@@ -106,10 +130,12 @@ public class TCPAsyncIO implements AsyncIO {
       }
 
       if (currentlyWriting != null) {
+        // Write as many bytes as possible from active buffer
         while (currentlyWriting.byteBuffer.hasRemaining() &&
             channel.write(currentlyWriting.byteBuffer) > 0) {
         }
 
+        // Discard buffer and notify listeners if it's fully written
         if (!currentlyWriting.byteBuffer.hasRemaining()) {
           currentlyWriting.sentFuture.complete(null);
           currentlyWriting = null;
@@ -142,6 +168,10 @@ public class TCPAsyncIO implements AsyncIO {
     }
   }
 
+  /**
+   * Poll the selector for readable/writable/acceptable channels
+   * and call the corresponding Clients or create new Client on accept
+   */
   private void selectForever() {
     ForkJoinPool.commonPool().execute(() -> {
       try {
@@ -256,6 +286,8 @@ public class TCPAsyncIO implements AsyncIO {
         channel = SocketChannel.open();
         channel.configureBlocking(true);
         channel.connect(address);
+
+        // Start polling the connected-state to notify listeners when connected
         awaitConnection(channel, clientConnectedFuture);
       } catch (IOException e) {
         clientConnectedFuture.completeExceptionally(new RuntimeException(e));
@@ -272,6 +304,9 @@ public class TCPAsyncIO implements AsyncIO {
     });
   }
 
+  /**
+   * Poll the channel for the connected-state before completing the associated future
+   */
   private void awaitConnection(final SocketChannel channel,
                                final CompletableFuture<Void> connectedFuture) {
     ForkJoinPool.commonPool().execute(() -> {

@@ -1,5 +1,8 @@
 package org.deadlock.id2212.asyncio.protocol;
 
+/**
+ * Header protocol that uses an Integer as header
+ */
 public class IntegerHeaderProtocol extends HeaderProtocol<IntegerHeaderClient> {
   public IntegerHeaderProtocol(final MessageLengthProtocol messageLengthProtocol) {
     super(messageLengthProtocol);

@@ -22,9 +22,13 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
-
+/**
+ * Find a common time among N peers in schedule X
+ *
+ * Automatically discovers other peers in the overlay after connecting
+ * to a bootstrap node.
+ */
 public class ScheduleManager implements Closeable {
   private final Overlay overlay;
   private Schedule mySchedule = new Schedule();
@@ -40,6 +44,7 @@ public class ScheduleManager implements Closeable {
   }
 
   private void onMessageReceived(final Peer peer, final IdJsonMessage message) {
+    // Respond with own schedule to RequestSchedule messages
     if (message.isClass(RequestSchedule.class)) {
       peer.send(mySchedule);
     }
@@ -78,6 +83,9 @@ public class ScheduleManager implements Closeable {
     return overlay.connect(inetSocketAddress).thenApply(ignored -> null);
   }
 
+  /**
+   * Loop over incoming messages and return the first Schedule message received
+   */
   private CompletionStage<Schedule> receiveNextSchedule(final Peer peer, final IdJsonMessage message) {
     if (message.isClass(Schedule.class)) {
       return completedFuture(message.getObject(Schedule.class));
@@ -85,7 +93,14 @@ public class ScheduleManager implements Closeable {
     return peer.receive().thenCompose(m -> receiveNextSchedule(peer, m));
   }
 
+  /**
+   * 1. Wait for N peers to be connected
+   * 2. Broadcast a RequestSchedule message to all of them
+   * 3. Receive Schedule message from all of them
+   * 4. Find the common times among all schedules and return one
+   */
   public CompletionStage<Instant> findTime(final int otherPeers) {
+    // Broadcast RequestSchedule-message
     final CompletionStage<List<CompletionStage<Peer>>> broadCastedToPeersFutures =
         overlay.waitForConnectedPeers(otherPeers)
             .thenApply(ignoredToo ->
@@ -93,6 +108,7 @@ public class ScheduleManager implements Closeable {
             );
 
     return broadCastedToPeersFutures.thenCompose(peerFutures -> {
+      // Receive Schedule messages from all peers
       final CompletionStage<List<Schedule>> scheduleFutures = allOfList(peerFutures
           .stream()
           .map(peerFuture ->
@@ -108,6 +124,7 @@ public class ScheduleManager implements Closeable {
           throw new NoMatchingTimeException("No peers connected");
         }
 
+        // Find the intersection of all schedules
         final Set<Instant> matchingTimes = new HashSet<>();
         matchingTimes.addAll(mySchedule.availableTimes);
         schedules
@@ -117,6 +134,8 @@ public class ScheduleManager implements Closeable {
         if (matchingTimes.size() == 0) {
           throw new NoMatchingTimeException("No match found among " + schedules.size() + " other peers.");
         }
+
+        // Return the first one
         return matchingTimes.iterator().next();
       });
     });

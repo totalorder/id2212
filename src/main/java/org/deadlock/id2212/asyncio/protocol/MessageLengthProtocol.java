@@ -12,6 +12,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 
+/**
+ * Enable sending and receiving messages of a certain length
+ */
 public class MessageLengthProtocol implements Protocol<BytesClient> {
   public static MessageLengthProtocol createDefault() {
     return new MessageLengthProtocol(new TCPAsyncIO());
@@ -28,12 +31,20 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
       this.asyncIOClient = asyncIOClient;
     }
 
+    /**
+     * Read the message length, then read that many bytes, add message to
+     * received message buffer and then start over.
+     */
     public void onDataReceived(final ByteBuffer buffer) {
+      // No message buffer, read length
       if (messageBuffer == null) {
+        // Read the message length into lengthBuffer
         while (lengthBuffer.hasRemaining() && buffer.hasRemaining()) {
           lengthBuffer.put(buffer.get());
         }
 
+        // If lengthBuffer is read, decode message length, store it in messageLength and
+        // allocate message buffer
         if (!lengthBuffer.hasRemaining()) {
           lengthBuffer.flip();
           messageLength = lengthBuffer.getInt();
@@ -41,6 +52,7 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
           messageBuffer = ByteBuffer.allocateDirect(messageLength);
         }
       } else {
+        // Read until message buffer is full. Put on queue when done
         while (messageBuffer.hasRemaining() && buffer.hasRemaining()) {
           messageBuffer.put(buffer.get());
         }
@@ -57,6 +69,9 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
       }
     }
 
+    /**
+     * Send a number of byte-chunks in a message with the total size as a header
+     */
     @Override
     public CompletionStage<Void> send(final byte[]... byteArrays) {
       int totalSize = 0;
@@ -64,6 +79,7 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
         totalSize += bytes.length;
       }
 
+      // Write the total size of all chunks as a 32-bit integer at start of message
       final ByteBuffer buffer = ByteBuffer.allocateDirect(4 + totalSize);
       buffer.putInt(totalSize);
       for (byte[] bytes : byteArrays) {

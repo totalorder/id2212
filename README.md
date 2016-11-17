@@ -29,3 +29,40 @@ java -cp target/u1-1.0-SNAPSHOT.jar org.deadlock.id2212.Main schedule2.txt 5001 
 ```
 java -cp target/u1-1.0-SNAPSHOT.jar org.deadlock.id2212.Main schedule3.txt 5002 127.0.0.1 5000
 ```
+
+# Architecture
+
+## Networking
+```
+ScheduleManager 
+        |
+        | < Object
+        |
+        v
+     Overlay
+        |
+        | < Object
+        |
+        v     
+  JsonProtocol 
+        |
+        | < Json-data (string)
+        |
+        v         
+IntegerHeaderProtocol
+        |
+        | < Json-data (string) [+ Json type-id (int)]
+        |
+        v
+MessageLengthProtocol        
+        |
+        | < Json-data (string) + Json type-id (int) [+ Message-length (int)]
+        |
+        v
+     AsyncIO
+        |
+        | < chunk of data (bytes)
+        |
+        v     
+   (remote host)
+```

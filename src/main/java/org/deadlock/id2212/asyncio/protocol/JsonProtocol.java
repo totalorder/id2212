@@ -10,6 +10,11 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 
+/**
+ * Enables sending and receiving objects using JSON. Classes must be registered
+ * using registerType() before sending/receiving.
+ * Objects must be de/serializable with Jackson.
+ */
 public class JsonProtocol implements Protocol<IdJsonClient> {
   private final IntegerHeaderProtocol integerHeaderProtocol;
   private final ObjectMapper mapper;
