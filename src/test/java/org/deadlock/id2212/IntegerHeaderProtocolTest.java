@@ -12,6 +12,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
 import static org.junit.Assert.assertEquals;
@@ -39,17 +40,22 @@ public class IntegerHeaderProtocolTest {
     // Given
     // Connect + accept
     integerHeaderProtocol.startServer(0).toCompletableFuture().get();
+    CompletableFuture<HeadedMessage<Integer>> receivedMessageFuture = new CompletableFuture<>();
+
     IntegerHeaderClient connectedClient = integerHeaderProtocol.connect(new InetSocketAddress(integerHeaderProtocol.getListeningPort()))
         .toCompletableFuture().get();
 
 
     IntegerHeaderClient acceptedClient = integerHeaderProtocol.accept().toCompletableFuture().get();
+    acceptedClient.setOnMessageReceivedCallback(receivedMessageFuture::complete);
 
     // When
     connectedClient.send(123, "Test message".getBytes("UTF-8")).toCompletableFuture().get();
 
     // Then
-    HeadedMessage<Integer> receivedMessage = acceptedClient.receive().toCompletableFuture().get();
+
+
+    HeadedMessage<Integer> receivedMessage = receivedMessageFuture.toCompletableFuture().get();
     assertEquals(123, receivedMessage.getHeader().intValue());
     assertEquals("Test message", new String(receivedMessage.getBytes(), "UTF-8"));
   }

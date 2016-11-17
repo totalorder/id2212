@@ -62,8 +62,7 @@ public class PeerExchangeOverlay implements Overlay {
           onPeerConnectedCallback.accept(peer);
         }
         return peer;
-      })
-      .thenApply(this::startReceivingMessages);
+      });
   }
 
   public CompletionStage<Peer> accept() {
@@ -75,8 +74,7 @@ public class PeerExchangeOverlay implements Overlay {
             onPeerAcceptedCallback.accept(peer);
           }
           return peer;
-        })
-        .thenApply(this::startReceivingMessages);
+        });
   }
 
   /**
@@ -84,13 +82,12 @@ public class PeerExchangeOverlay implements Overlay {
    */
   private CompletionStage<PeerExchangePeer> exchangePeerId(final IdJsonClient jsonClient) {
     // Send local peer id to remote peer
-    return jsonClient.send(getPeerId())
-        .thenCompose(ignored ->
-            // Receive remote peer id
-            jsonClient.receive())
-        .thenApply(jsonMessage ->
-            // Create peer with received peer id
-            createPeer(jsonMessage.getObject(PeerId.class), jsonClient));
+    return jsonClient.send(getPeerId()).thenCompose(ignored -> {
+      final CompletableFuture<PeerExchangePeer> peerFuture = new CompletableFuture<>();
+      jsonClient.setOnMessageReceivedCallback(jsonMessage ->
+          peerFuture.complete(createPeer(jsonMessage.getObject(PeerId.class), jsonClient)));
+      return peerFuture;
+    });
   }
 
   /**
@@ -113,31 +110,13 @@ public class PeerExchangeOverlay implements Overlay {
     return peer.send(getKnownPeers());
   }
 
-  /**
-   * Receive messages forever
-   */
-  private Peer startReceivingMessages(final PeerExchangePeer peer) {
-    final CompletionStage<Void> receivingForeverFuture = receiveMessagesForever(peer);
-    synchronized (peersReceivingFutures) {
-      peersReceivingFutures.add(receivingForeverFuture);
+  private void onOverlayMessageReceived(final PeerExchangePeer peer, final IdJsonMessage jsonMessage) {
+    // Handle KnownPeers message, ignore others
+    if (jsonMessage.isClass(KnownPeers.class)) {
+      acceptPeerAnnouncement(jsonMessage.getObject(KnownPeers.class));
+    } else {
+      new RuntimeException("Unsupported message type!").printStackTrace();
     }
-    return peer;
-  }
-
-  /**
-   * Hand peer announcement messages to acceptPeerAnnouncement()
-   */
-  private CompletionStage<Void> receiveMessagesForever(final PeerExchangePeer peer) {
-    return peer.receiveInternal().thenCompose(jsonMessage -> {
-      // Handle KnownPeers message, ignore others
-      if (jsonMessage.isClass(KnownPeers.class)) {
-        return acceptPeerAnnouncement(jsonMessage.getObject(KnownPeers.class))
-            .thenCompose(ignored -> receiveMessagesForever(peer));
-      } else {
-        new RuntimeException("Unsupported message type!").printStackTrace();
-        return receiveMessagesForever(peer);
-      }
-    });
   }
 
   public CompletionStage<Void> start(final int port) {
@@ -233,7 +212,9 @@ public class PeerExchangeOverlay implements Overlay {
   }
 
   private PeerExchangePeer createPeer(final PeerId peerId, final IdJsonClient jsonClient) {
-    final PeerExchangePeer peer = new PeerExchangePeer(peerId.uuid, peerId.listeningPort, jsonClient, onMessageReceivedCallback);
+    final PeerExchangePeer peer = new PeerExchangePeer(peerId.uuid, peerId.listeningPort, jsonClient);
+    peer.setOnOverlayMessageReceivedCallback(message -> onOverlayMessageReceived(peer, message));
+    peer.setOnMessageReceivedCallback(message -> onMessageReceivedCallback.accept(peer, message));
     synchronized (peers) {
       peers.add(peer);
       // Notify any listeners that N peers are connected

@@ -52,5 +52,4 @@ public class ScheduleManagerTest {
     final CompletionStage<Instant> agreedTime1Future = scheduleManager1.findTime(1);
     assertEquals(time2, agreedTime1Future.toCompletableFuture().get());
   }
-
 }

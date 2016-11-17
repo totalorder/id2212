@@ -8,9 +8,12 @@ import org.deadlock.id2212.overlay.messages.PeerId;
 import org.deadlock.id2212.overlay.messages.PeerInfo;
 
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * Receive messages and put overlay-specific messages in a specific queue, while
@@ -20,16 +23,19 @@ public class PeerExchangePeer implements Peer {
   private final UUID uuid;
   private final int listeningPort;
   private final IdJsonClient jsonClient;
-  private final BiConsumer<Peer, IdJsonMessage> onMessageReceivedCallback;
+  private Consumer<IdJsonMessage> onMessageReceivedCallback;
   private final AsyncQueue<IdJsonMessage> messages = new AsyncQueue<>();
   private final AsyncQueue<IdJsonMessage> internalMessages = new AsyncQueue<>();
-  private volatile CompletionStage<Void> receiving = null;
+  private Consumer<IdJsonMessage> onOverlayMessageReceivedCallback;
+  private List<IdJsonMessage> callbackQueue = new ArrayList<>();
+  private List<IdJsonMessage> overlayCallbackQueue = new ArrayList<>();
 
-  public PeerExchangePeer(final UUID uuid, int listeningPort, final IdJsonClient jsonClient, BiConsumer<Peer, IdJsonMessage> onMessageReceivedCallback) {
+  public PeerExchangePeer(final UUID uuid, int listeningPort, final IdJsonClient jsonClient) {
     this.uuid = uuid;
     this.listeningPort = listeningPort;
     this.jsonClient = jsonClient;
-    this.onMessageReceivedCallback = onMessageReceivedCallback;
+    jsonClient.setOnMessageReceivedCallback(this::onMessageReceived);
+
   }
 
   @Override
@@ -42,25 +48,53 @@ public class PeerExchangePeer implements Peer {
     return uuid;
   }
 
-  private void ensureReceiving() {
-    // Make sure to always receive messages
-    if (receiving == null) {
-      jsonClient.receive().thenApply(message -> {
-            ensureReceiving();
-            onMessageReceived(message);
-        return null;
-          });
+
+  @Override
+  public void setOnMessageReceivedCallback(final Consumer<IdJsonMessage> callback) {
+    onMessageReceivedCallback = callback;
+    ArrayList<IdJsonMessage> callbackQueueCopy;
+    synchronized (callbackQueue) {
+      callbackQueueCopy = new ArrayList<>(callbackQueue);
+      callbackQueue.clear();
     }
+    callbackQueueCopy.stream().forEach(callback::accept);
+  }
+
+  public void setOnOverlayMessageReceivedCallback(final Consumer<IdJsonMessage> callback) {
+    onOverlayMessageReceivedCallback = callback;
+    ArrayList<IdJsonMessage> callbackQueueCopy;
+    synchronized (callbackQueue) {
+      callbackQueueCopy = new ArrayList<>(callbackQueue);
+      callbackQueue.clear();
+    }
+    callbackQueueCopy.stream().forEach(callback::accept);
+  }
+
+  @Override
+  public InetSocketAddress getAddress() {
+    return jsonClient.getAddress();
   }
 
   private synchronized Void onMessageReceived(final IdJsonMessage message) {
     // Put internal messages on internalMessages queue, others on messages queue
     if (message.isClass(KnownPeers.class, PeerId.class, PeerInfo.class)) {
+      if (onOverlayMessageReceivedCallback != null) {
+        onOverlayMessageReceivedCallback.accept(message);
+      } else {
+        synchronized (overlayCallbackQueue) {
+          overlayCallbackQueue.add(message);
+        }
+      }
+
       internalMessages.add(message);
     } else {
       // Notify client that message is received
       if (onMessageReceivedCallback != null) {
-        onMessageReceivedCallback.accept(this, message);
+        onMessageReceivedCallback.accept(message);
+      } else {
+        synchronized (callbackQueue) {
+          callbackQueue.add(message);
+        }
       }
       messages.add(message);
     }
@@ -68,14 +102,11 @@ public class PeerExchangePeer implements Peer {
     return null;
   }
 
-  @Override
   public CompletionStage<IdJsonMessage> receive() {
-    ensureReceiving();
     return messages.remove();
   }
 
   public CompletionStage<IdJsonMessage> receiveInternal() {
-    ensureReceiving();
     return internalMessages.remove();
   }
 

@@ -8,9 +8,16 @@ import org.deadlock.id2212.asyncio.TCPAsyncIO;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.CompletionStage;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * Enable sending and receiving messages of a certain length
@@ -22,12 +29,14 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
 
   public static class MessageLengthProtocolClient implements BytesClient {
     private final AsyncIOClient asyncIOClient;
-    private final AsyncQueue<ByteBuffer> receivedMessages = new AsyncQueue<>();
+    private Consumer<byte[]> onMessageReceivedCallback;
+    private final AsyncQueue<byte[]> receivedMessages = new AsyncQueue<>();
     private ByteBuffer lengthBuffer = ByteBuffer.allocateDirect(4);
     private ByteBuffer messageBuffer = null;
     private int messageLength;
+    private List<byte[]> callbackQueue = new ArrayList<>();
 
-    public MessageLengthProtocolClient(AsyncIOClient asyncIOClient) {
+    public MessageLengthProtocolClient(final AsyncIOClient asyncIOClient) {
       this.asyncIOClient = asyncIOClient;
     }
 
@@ -59,7 +68,18 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
 
         if (!messageBuffer.hasRemaining()) {
           messageBuffer.flip();
-          receivedMessages.add(messageBuffer);
+
+          byte[] bytes = new byte[messageBuffer.remaining()];
+          messageBuffer.get(bytes);
+          receivedMessages.add(bytes);
+          if (onMessageReceivedCallback != null) {
+            onMessageReceivedCallback.accept(bytes);
+          } else {
+            synchronized (callbackQueue) {
+              callbackQueue.add(bytes);
+            }
+          }
+
           messageBuffer = null;
         }
       }
@@ -90,18 +110,29 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
       return asyncIOClient.send(buffer);
     }
 
-    @Override
     public CompletionStage<byte[]> receive() {
       return receivedMessages.remove().thenApply(buffer -> {
-        byte[] bytes = new byte[buffer.remaining()];
-        buffer.get(bytes);
-        return bytes;
+//        byte[] bytes = new byte[buffer.remaining()];
+//        buffer.get(bytes);
+//        return bytes;
+        return buffer;
       });
     }
 
     @Override
     public InetSocketAddress getAddress() {
       return asyncIOClient.getAddress();
+    }
+
+    @Override
+    public void setOnMessageReceivedCallback(Consumer<byte[]> callback) {
+      onMessageReceivedCallback = callback;
+      ArrayList<byte[]> callbackQueueCopy;
+      synchronized (callbackQueue) {
+        callbackQueueCopy = new ArrayList<>(callbackQueue);
+        callbackQueue.clear();
+      }
+      callbackQueueCopy.stream().forEach(callback::accept);
     }
   }
 

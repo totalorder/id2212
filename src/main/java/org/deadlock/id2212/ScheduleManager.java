@@ -16,10 +16,12 @@ import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.stream.Collectors;
 
@@ -32,6 +34,7 @@ import java.util.stream.Collectors;
 public class ScheduleManager implements Closeable {
   private final Overlay overlay;
   private Schedule mySchedule = new Schedule();
+  private HashMap<Peer, CompletableFuture<Schedule>> waitingForSchedules = new HashMap<>();
 
   public ScheduleManager(final Overlay overlay) {
     overlay.setOnMessageReceivedCallback(this::onMessageReceived);
@@ -47,6 +50,9 @@ public class ScheduleManager implements Closeable {
     // Respond with own schedule to RequestSchedule messages
     if (message.isClass(RequestSchedule.class)) {
       peer.send(mySchedule);
+    } else if (message.isClass(Schedule.class)) {
+      final CompletableFuture<Schedule> scheduleFuture = waitingForSchedules.getOrDefault(peer, new CompletableFuture<>());
+      scheduleFuture.complete(message.getObject(Schedule.class));
     }
   }
 
@@ -84,16 +90,6 @@ public class ScheduleManager implements Closeable {
   }
 
   /**
-   * Loop over incoming messages and return the first Schedule message received
-   */
-  private CompletionStage<Schedule> receiveNextSchedule(final Peer peer, final IdJsonMessage message) {
-    if (message.isClass(Schedule.class)) {
-      return completedFuture(message.getObject(Schedule.class));
-    }
-    return peer.receive().thenCompose(m -> receiveNextSchedule(peer, m));
-  }
-
-  /**
    * 1. Wait for N peers to be connected
    * 2. Broadcast a RequestSchedule message to all of them
    * 3. Receive Schedule message from all of them
@@ -103,20 +99,18 @@ public class ScheduleManager implements Closeable {
     // Broadcast RequestSchedule-message
     final CompletionStage<List<CompletionStage<Peer>>> broadCastedToPeersFutures =
         overlay.waitForConnectedPeers(otherPeers)
-            .thenApply(ignoredToo ->
-                    overlay.broadcast(new RequestSchedule())
-            );
+            .thenApply(ignoredToo -> {
+              waitingForSchedules = new HashMap<>();
+              return overlay.broadcast(new RequestSchedule());
+            });
 
     return broadCastedToPeersFutures.thenCompose(peerFutures -> {
       // Receive Schedule messages from all peers
       final CompletionStage<List<Schedule>> scheduleFutures = allOfList(peerFutures
           .stream()
           .map(peerFuture ->
-                  peerFuture.thenCompose((Peer peer) -> {
-                    return peer.receive().thenCompose((IdJsonMessage message) -> {
-                      return receiveNextSchedule(peer, message);
-                    });
-                  })
+                  // TODO: Sync
+                  peerFuture.thenCompose((Peer peer) -> waitingForSchedules.getOrDefault(peer, new CompletableFuture<>()))
           ).collect(Collectors.toList()));
 
       return scheduleFutures.thenApply(schedules -> {

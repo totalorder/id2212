@@ -3,6 +3,7 @@ package org.deadlock.id2212;
 import org.deadlock.id2212.asyncio.AsyncIO;
 import org.deadlock.id2212.asyncio.TCPAsyncIO;
 import org.deadlock.id2212.asyncio.protocol.BytesClient;
+import org.deadlock.id2212.asyncio.protocol.IdJsonMessage;
 import org.deadlock.id2212.asyncio.protocol.MessageLengthProtocol;
 import org.junit.After;
 import org.junit.Before;
@@ -11,6 +12,7 @@ import org.junit.Test;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.channels.SocketChannel;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
 import static org.junit.Assert.*;
@@ -67,13 +69,16 @@ public class MessageLengthProtocolTest {
     messageLengthProtocol.startServer(0).toCompletableFuture().get();
     BytesClient connectedClient = messageLengthProtocol.connect(new InetSocketAddress(messageLengthProtocol.getListeningPort()))
         .toCompletableFuture().get();
+
+    CompletableFuture<byte[]> receivedMessageFuture = new CompletableFuture<>();
     BytesClient acceptedClient = messageLengthProtocol.accept().toCompletableFuture().get();
+    acceptedClient.setOnMessageReceivedCallback(receivedMessageFuture::complete);
 
     // When
     connectedClient.send("Test message".getBytes("UTF-8")).toCompletableFuture().get();
 
     // Then
-    final byte[] bytes = acceptedClient.receive().toCompletableFuture().get();
+    final byte[] bytes = receivedMessageFuture.toCompletableFuture().get();
     assertEquals("Test message", new String(bytes, "UTF-8"));
   }
 }

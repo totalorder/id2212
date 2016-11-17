@@ -3,12 +3,16 @@ package org.deadlock.id2212.asyncio.protocol;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.deadlock.id2212.asyncio.AsyncQueue;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
+import java.util.function.Consumer;
 
 /**
  * Enables sending and receiving objects using JSON. Classes must be registered
@@ -41,9 +45,25 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
   class JsonProtocolClient implements IdJsonClient {
 
     private final IntegerHeaderClient integerHeaderClient;
+    private Consumer<IdJsonMessage> onMessageReceivedCallback;
+    private AsyncQueue<IdJsonMessage> receivedMessages = new AsyncQueue<>();
+    private List<IdJsonMessage> callbackQueue = new ArrayList<>();
 
     public JsonProtocolClient(final IntegerHeaderClient integerHeaderClient) {
       this.integerHeaderClient = integerHeaderClient;
+      integerHeaderClient.setOnMessageReceivedCallback(this::onMessageReceived);
+    }
+
+    public void onMessageReceived(final HeadedMessage<Integer> message) {
+      final IdJsonMessage jsonMessage = new IdJsonMessage(mapper, typeToClass, message.getHeader(), message.getBytes());
+      receivedMessages.add(jsonMessage);
+      if (onMessageReceivedCallback != null) {
+        onMessageReceivedCallback.accept(jsonMessage);
+      } else {
+        synchronized (callbackQueue) {
+          callbackQueue.add(jsonMessage);
+        }
+      }
     }
 
     @Override
@@ -59,10 +79,21 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
       }
     }
 
-    @Override
     public CompletionStage<IdJsonMessage> receive() {
-      return integerHeaderClient.receive().thenApply(message ->
-          new IdJsonMessage(mapper, typeToClass, message.getHeader(), message.getBytes()));
+      return receivedMessages.remove();
+    }
+
+    @Override
+    public void setOnMessageReceivedCallback(Consumer<IdJsonMessage> callback) {
+      onMessageReceivedCallback = callback;
+
+      ArrayList<IdJsonMessage> callbackQueueCopy;
+      synchronized (callbackQueue) {
+        callbackQueueCopy = new ArrayList<>(callbackQueue);
+        callbackQueue.clear();
+      }
+      callbackQueueCopy.stream().forEach(callback::accept);
+
     }
 
     @Override
