@@ -5,18 +5,24 @@ import org.deadlock.id2212.messages.RequestSchedule;
 import org.deadlock.id2212.overlay.Overlay;
 import org.deadlock.id2212.messages.Schedule;
 import org.deadlock.id2212.overlay.Peer;
-import static org.deadlock.id2212.CompletableExtras.allOfList;
+import org.deadlock.id2212.overlay.PeerExchangeOverlay;
+
+import static java.util.concurrent.CompletableFuture.completedFuture;
+import static org.deadlock.id2212.util.CompletableExtras.allOfList;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 
 public class ScheduleManager implements Closeable {
@@ -25,6 +31,8 @@ public class ScheduleManager implements Closeable {
 
   public ScheduleManager(final Overlay overlay) {
     overlay.setOnMessageReceivedCallback(this::onMessageReceived);
+    overlay.setOnPeerAcceptedCallback(this::onPeerAccepted);
+    overlay.setOnPeerConnectedCallback(this::onPeerConnected);
     mySchedule.availableTimes = new LinkedList<>();
     overlay.registerType(Schedule.class);
     overlay.registerType(RequestSchedule.class);
@@ -37,11 +45,28 @@ public class ScheduleManager implements Closeable {
     }
   }
 
+  private void onPeerAccepted(final Peer peer) {
+    System.out.println("Accepted connection from " + peer.getUUID().toString());
+  }
+
+  private void onPeerConnected(final Peer peer) {
+    System.out.println("Connected to " + peer.getUUID().toString());
+  }
+
+  public static ScheduleManager createDefault() {
+    return new ScheduleManager(PeerExchangeOverlay.createDefault());
+  }
+
   public CompletionStage<Void> start(final int port) {
-    return overlay.start(port);
+    return overlay.start(port).thenApply(ignored -> {
+      System.out.println("UUID: " + overlay.getUUID());
+      System.out.println("Listening on port " + port + "...");
+      return null;
+    });
   }
 
   public void addTime(final Instant time) {
+    System.out.println("Added time to schedule: " + LocalDateTime.ofInstant(time, ZoneOffset.UTC));
     mySchedule.availableTimes.add(time);
   }
 
@@ -51,6 +76,13 @@ public class ScheduleManager implements Closeable {
 
   public CompletionStage<Void> connect(InetSocketAddress inetSocketAddress) {
     return overlay.connect(inetSocketAddress).thenApply(ignored -> null);
+  }
+
+  private CompletionStage<Schedule> receiveNextSchedule(final Peer peer, final IdJsonMessage message) {
+    if (message.isClass(Schedule.class)) {
+      return completedFuture(message.getObject(Schedule.class));
+    }
+    return peer.receive().thenCompose(m -> receiveNextSchedule(peer, m));
   }
 
   public CompletionStage<Instant> findTime(final int otherPeers) {
@@ -65,9 +97,9 @@ public class ScheduleManager implements Closeable {
           .stream()
           .map(peerFuture ->
                   peerFuture.thenCompose((Peer peer) -> {
-                    System.out.println("Receiving...");
-                    return peer.receive().thenApply((IdJsonMessage message) ->
-                        message.getObject(Schedule.class));
+                    return peer.receive().thenCompose((IdJsonMessage message) -> {
+                      return receiveNextSchedule(peer, message);
+                    });
                   })
           ).collect(Collectors.toList()));
 
@@ -80,7 +112,8 @@ public class ScheduleManager implements Closeable {
         matchingTimes.addAll(mySchedule.availableTimes);
         schedules
             .stream()
-            .map((Schedule schedule) -> matchingTimes.retainAll(schedule.availableTimes));
+            .forEach((Schedule schedule) ->
+                matchingTimes.retainAll(schedule.availableTimes));
         if (matchingTimes.size() == 0) {
           throw new NoMatchingTimeException("No match found among " + schedules.size() + " other peers.");
         }

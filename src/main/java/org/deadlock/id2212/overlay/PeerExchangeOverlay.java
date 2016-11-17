@@ -22,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
@@ -36,6 +37,8 @@ public class PeerExchangeOverlay implements Overlay {
   private CompletableFuture<Void> acceptingForeverFuture;
   private ScheduledExecutorService scheduledExecutorService;
   private BiConsumer<Peer, IdJsonMessage> onMessageReceivedCallback;
+  private Consumer<Peer> onPeerAcceptedCallback;
+  private Consumer<Peer> onPeerConnectedCallback;
 
   public PeerExchangeOverlay(final JsonProtocol jsonProtocol) {
     this.jsonProtocol = jsonProtocol;
@@ -48,12 +51,24 @@ public class PeerExchangeOverlay implements Overlay {
   public CompletionStage<Peer> connect(InetSocketAddress inetSocketAddress) {
     return jsonProtocol.connect(inetSocketAddress)
       .thenCompose(this::exchangePeerId)
+      .thenApply(peer -> {
+        if (onPeerConnectedCallback != null) {
+          onPeerConnectedCallback.accept(peer);
+        }
+        return peer;
+      })
       .thenApply(this::startReceivingMessages);
   }
 
   public CompletionStage<Peer> accept() {
     return jsonProtocol.accept()
         .thenCompose(this::exchangePeerId)
+        .thenApply(peer -> {
+          if (onPeerAcceptedCallback != null) {
+            onPeerAcceptedCallback.accept(peer);
+          }
+          return peer;
+        })
         .thenApply(this::startReceivingMessages);
   }
 
@@ -124,6 +139,10 @@ public class PeerExchangeOverlay implements Overlay {
 
   private void announceKnownPeersForever() {
     scheduledExecutorService.schedule(() -> {
+      if (started != null) {
+        started.complete(null);
+      }
+
       try {
         announceKnownPeers().toCompletableFuture().get();
       } catch (InterruptedException | ExecutionException e) {
@@ -228,6 +247,16 @@ public class PeerExchangeOverlay implements Overlay {
   @Override
   public void setOnMessageReceivedCallback(BiConsumer<Peer, IdJsonMessage> callback) {
     this.onMessageReceivedCallback = callback;
+  }
+
+  @Override
+  public void setOnPeerAcceptedCallback(Consumer<Peer> callback) {
+    this.onPeerAcceptedCallback = callback;
+  }
+
+  @Override
+  public void setOnPeerConnectedCallback(Consumer<Peer> callback) {
+    this.onPeerConnectedCallback = callback;
   }
 
   @Override

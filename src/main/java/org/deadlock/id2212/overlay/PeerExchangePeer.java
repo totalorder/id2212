@@ -33,9 +33,18 @@ public class PeerExchangePeer implements Peer {
     return jsonClient.send(object);
   }
 
-  private synchronized void ensureReceiving() {
+  @Override
+  public UUID getUUID() {
+    return uuid;
+  }
+
+  private void ensureReceiving() {
     if (receiving == null) {
-      receiving = jsonClient.receive().thenApply(this::onMessageReceived);
+      jsonClient.receive().thenApply(message -> {
+            ensureReceiving();
+            onMessageReceived(message);
+        return null;
+          });
     }
   }
 
@@ -43,10 +52,13 @@ public class PeerExchangePeer implements Peer {
     if (message.isClass(KnownPeers.class, PeerId.class, PeerInfo.class)) {
       internalMessages.add(message);
     } else {
-      onMessageReceivedCallback.accept(this, message);
+
+      if (onMessageReceivedCallback != null) {
+        onMessageReceivedCallback.accept(this, message);
+      }
       messages.add(message);
     }
-    receiving = null;
+
     return null;
   }
 

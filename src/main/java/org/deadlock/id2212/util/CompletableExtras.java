@@ -1,4 +1,4 @@
-package org.deadlock.id2212;
+package org.deadlock.id2212.util;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;

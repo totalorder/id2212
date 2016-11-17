@@ -32,4 +32,8 @@ public class IdJsonMessage extends HeadedJson<Integer> {
       throw new RuntimeException(e);
     }
   }
+
+  public String getString() {
+    return super.getString();
+  }
 }
