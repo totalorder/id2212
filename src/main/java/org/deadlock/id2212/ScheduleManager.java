@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
  */
 public class ScheduleManager implements Closeable {
   private final Overlay overlay;
-  private Schedule mySchedule = new Schedule();
+  private final Schedule mySchedule = new Schedule();
   private HashMap<Peer, CompletableFuture<Schedule>> waitingForSchedules = new HashMap<>();
 
   public ScheduleManager(final Overlay overlay) {
@@ -51,7 +51,11 @@ public class ScheduleManager implements Closeable {
     if (message.isClass(RequestSchedule.class)) {
       peer.send(mySchedule);
     } else if (message.isClass(Schedule.class)) {
-      final CompletableFuture<Schedule> scheduleFuture = waitingForSchedules.getOrDefault(peer, new CompletableFuture<>());
+      final CompletableFuture<Schedule> scheduleFuture;
+      synchronized (waitingForSchedules) {
+        waitingForSchedules.putIfAbsent(peer, new CompletableFuture<>());
+        scheduleFuture = waitingForSchedules.get(peer);
+      }
       scheduleFuture.complete(message.getObject(Schedule.class));
     }
   }
@@ -109,8 +113,12 @@ public class ScheduleManager implements Closeable {
       final CompletionStage<List<Schedule>> scheduleFutures = allOfList(peerFutures
           .stream()
           .map(peerFuture ->
-                  // TODO: Sync
-                  peerFuture.thenCompose((Peer peer) -> waitingForSchedules.getOrDefault(peer, new CompletableFuture<>()))
+                  peerFuture.thenCompose((Peer peer) -> {
+                    synchronized (waitingForSchedules) {
+                      waitingForSchedules.putIfAbsent(peer, new CompletableFuture<>());
+                      return waitingForSchedules.get(peer);
+                    }
+                  })
           ).collect(Collectors.toList()));
 
       return scheduleFutures.thenApply(schedules -> {
