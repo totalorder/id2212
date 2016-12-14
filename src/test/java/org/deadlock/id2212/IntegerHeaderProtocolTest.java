@@ -3,6 +3,7 @@ package org.deadlock.id2212;
 import org.deadlock.id2212.asyncio.AsyncIO;
 import org.deadlock.id2212.asyncio.TCPAsyncIO;
 import org.deadlock.id2212.asyncio.protocol.HeadedMessage;
+import org.deadlock.id2212.asyncio.protocol.IntegerUUIDHeader;
 import org.deadlock.id2212.asyncio.protocol.MessageLengthProtocol;
 import org.deadlock.id2212.asyncio.protocol.IntegerHeaderClient;
 import org.deadlock.id2212.asyncio.protocol.IntegerHeaderProtocol;
@@ -12,6 +13,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
@@ -40,7 +42,7 @@ public class IntegerHeaderProtocolTest {
     // Given
     // Connect + accept
     integerHeaderProtocol.startServer(0).toCompletableFuture().get();
-    CompletableFuture<HeadedMessage<Integer>> receivedMessageFuture = new CompletableFuture<>();
+    CompletableFuture<HeadedMessage<IntegerUUIDHeader>> receivedMessageFuture = new CompletableFuture<>();
 
     IntegerHeaderClient connectedClient = integerHeaderProtocol.connect(new InetSocketAddress(integerHeaderProtocol.getListeningPort()))
         .toCompletableFuture().get();
@@ -50,13 +52,15 @@ public class IntegerHeaderProtocolTest {
     acceptedClient.setOnMessageReceivedCallback(receivedMessageFuture::complete);
 
     // When
-    connectedClient.send(123, "Test message".getBytes("UTF-8")).toCompletableFuture().get();
+    final UUID uuid = UUID.randomUUID();
+    connectedClient.send(new IntegerUUIDHeader(123, uuid), "Test message".getBytes("UTF-8")).toCompletableFuture().get();
 
     // Then
 
 
-    HeadedMessage<Integer> receivedMessage = receivedMessageFuture.toCompletableFuture().get();
-    assertEquals(123, receivedMessage.getHeader().intValue());
+    HeadedMessage<IntegerUUIDHeader> receivedMessage = receivedMessageFuture.toCompletableFuture().get();
+    assertEquals(123, receivedMessage.getHeader().integer);
+    assertEquals(uuid, receivedMessage.getHeader().uuid);
     assertEquals("Test message", new String(receivedMessage.getBytes(), "UTF-8"));
   }
 }

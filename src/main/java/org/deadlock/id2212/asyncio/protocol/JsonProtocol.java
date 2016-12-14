@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
@@ -54,7 +55,7 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
       integerHeaderClient.setOnMessageReceivedCallback(this::onMessageReceived);
     }
 
-    public void onMessageReceived(final HeadedMessage<Integer> message) {
+    public void onMessageReceived(final HeadedMessage<IntegerUUIDHeader> message) {
       final IdJsonMessage jsonMessage = new IdJsonMessage(mapper, typeToClass, message.getHeader(), message.getBytes());
       receivedMessages.add(jsonMessage);
       if (onMessageReceivedCallback != null) {
@@ -67,13 +68,18 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
     }
 
     @Override
-    public CompletionStage<Void> send(Object serializable) {
+    public CompletionStage<Void> send(final Object serializable) {
+      return send(serializable, UUID.randomUUID());
+    }
+
+    @Override
+    public CompletionStage<Void> send(final Object serializable, final UUID uuid) {
       final Integer type = classToType.get(serializable.getClass());
       if (type == null) {
         throw new RuntimeException("Type for class " + serializable.getClass().getName() + " does not exists");
       }
       try {
-        return integerHeaderClient.send(type, mapper.writeValueAsBytes(serializable));
+        return integerHeaderClient.send(new IntegerUUIDHeader(type, uuid), mapper.writeValueAsBytes(serializable));
       } catch (JsonProcessingException e) {
         throw new RuntimeException(e);
       }
