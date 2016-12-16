@@ -62,4 +62,21 @@ public class DHTTest {
     dht1.waitForFingersFixed().toCompletableFuture().get();
     dht2.waitForFingersFixed().toCompletableFuture().get();
   }
+
+  @Test
+  public void canLeave() throws Exception {
+    dht1.start(0);
+    dht2.start(0);
+
+    dht1.initiate();
+    dht2.join(new InetSocketAddress(dht1.getListeningPort())).toCompletableFuture().get();
+
+    dht1.waitForFingersFixed().toCompletableFuture().get();
+    dht2.waitForFingersFixed().toCompletableFuture().get();
+
+    System.out.println("STOPPING!");
+    dht1.stop().toCompletableFuture().get();
+
+    dht2.waitForAlone().toCompletableFuture().get();
+  }
 }

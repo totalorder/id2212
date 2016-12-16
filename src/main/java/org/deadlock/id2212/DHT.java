@@ -2,6 +2,8 @@ package org.deadlock.id2212;
 
 import com.google.common.collect.Lists;
 import org.deadlock.id2212.asyncio.protocol.IdJsonMessage;
+import org.deadlock.id2212.messages.HeartbeatRequest;
+import org.deadlock.id2212.messages.HeartbeatResponse;
 import org.deadlock.id2212.messages.PredecessorNotification;
 import org.deadlock.id2212.messages.PredecessorRequest;
 import org.deadlock.id2212.messages.PredecessorResponse;
@@ -11,9 +13,12 @@ import org.deadlock.id2212.overlay.Overlay;
 import org.deadlock.id2212.overlay.Peer;
 import org.deadlock.id2212.overlay.PeerExchangeOverlay;
 
+import javax.swing.text.html.StyleSheet;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
@@ -48,12 +53,18 @@ public class DHT implements Closeable {
   private ScheduledExecutorService scheduledExecutorService;
   private CompletableFuture<Void> isStable = new CompletableFuture<>();
   private CompletableFuture<Void> fingersFixed = new CompletableFuture<>();
+  private Map<Peer, Instant> heartbeats = new HashMap<>();
+  private boolean running = false;
+  private CompletableFuture<Void> stopped;
+  private CompletableFuture<Void> isAlone = new CompletableFuture<>();
 
   public DHT(final Overlay overlay) {
     overlay.setOnMessageReceivedCallback(this::onMessageReceived);
     overlay.setOnPeerAcceptedCallback(this::onPeerAccepted);
     overlay.setOnPeerConnectedCallback(this::onPeerConnected);
 
+    overlay.registerType(HeartbeatRequest.class);
+    overlay.registerType(HeartbeatResponse.class);
     overlay.registerType(PredecessorNotification.class);
     overlay.registerType(PredecessorRequest.class);
     overlay.registerType(PredecessorResponse.class);
@@ -64,6 +75,9 @@ public class DHT implements Closeable {
   }
 
   private void onMessageReceived(final Peer peer, final IdJsonMessage message) {
+    if (!running) {
+      return;
+    }
     System.out.println(localUUID + " received " + message);
     if (message.isClass(PredecessorRequest.class)) {
       peer.send(new PredecessorResponse(predecessor != null ? predecessor.getUUID() : null, overlay.getListeningAddress()), message.getUUID());
@@ -73,6 +87,8 @@ public class DHT implements Closeable {
     } else if (message.isClass(PredecessorNotification.class)) {
       final PredecessorNotification predecessorNotification = message.getObject(PredecessorNotification.class);
       onPredecessorNotification(peer, message, predecessorNotification);
+    } else  if (message.isClass(HeartbeatRequest.class)) {
+      peer.send(new HeartbeatResponse(), message.getUUID());
     }
   }
 
@@ -145,6 +161,7 @@ public class DHT implements Closeable {
 //  }
 
   public CompletionStage<Void> join(final InetSocketAddress inetSocketAddress) {
+    running = true;
     while (fingers.size() < numFingers) {
       fingers.add(me);
     }
@@ -172,7 +189,14 @@ public class DHT implements Closeable {
     return isStable;
   }
 
+  public CompletionStage<Void> waitForAlone() {
+    isAlone = new CompletableFuture<>();
+    return isAlone;
+  }
+
   public CompletionStage<Void> waitForFingersFixed() {
+    nextFingerToFix = 0;
+    fingersFixed = new CompletableFuture<>();
     return fingersFixed;
   }
 
@@ -214,7 +238,35 @@ public class DHT implements Closeable {
     }
   }
 
+  public CompletionStage<Void> heartbeat() {
+    if (predecessor != null && predecessor != me) {
+      heartbeats.putIfAbsent(predecessor, Instant.now());
+      if (heartbeats.get(predecessor).isBefore(Instant.now().minus(500, ChronoUnit.MILLIS))) {
+        System.out.println(localUUID + " predecessor timed out!");
+        predecessor = null;
+        return completedFuture(null);
+      }
+
+      System.out.println(localUUID + " Sending heartbe3at!");
+      return predecessor.send(new HeartbeatRequest())
+          .thenCompose(predecessor::receive)
+          .thenApply(ignored -> {
+            if (predecessor != null) {
+              heartbeats.put(predecessor, Instant.now());
+            }
+            return null;
+          });
+    } else {
+      System.out.println(localUUID + "Sending NO heartbe3at!");
+    }
+    return completedFuture(null);
+  }
+
   public CompletionStage<Void> stabilize() {
+    if (successor == me && predecessor == null && !isAlone.isDone()) {
+      isAlone.complete(null);
+    }
+
     if (successor == null) {
       return completedFuture(null);
     }
@@ -274,6 +326,7 @@ public class DHT implements Closeable {
   }
 
   public void initiate() {
+    running = true;
     predecessor = null;
     successor = me;
     while (fingers.size() < numFingers) {
@@ -304,23 +357,42 @@ public class DHT implements Closeable {
     }
   }
 
+  public CompletableFuture<Void> stop() {
+    stopped = new CompletableFuture<>();
+    running = false;
+    return stopped;
+  }
+
   private void stabilizeForever() {
     // Announce known peers to all connected peers every second
     scheduledExecutorService.schedule(() -> {
       try {
+//        heartbeat().toCompletableFuture().get();
         stabilize().toCompletableFuture().get();
         fixFingers().toCompletableFuture().get();
+
       } catch (Exception e) {
         e.printStackTrace();
       } finally {
         System.out.println(localUUID + " predecessor: " + (predecessor != null ? predecessor.getUUID() : "null"));
         System.out.println(localUUID + " successor: " + (successor != null ? successor.getUUID() : "null"));
-        for (final Peer finger : fingers) {
-//          System.out.println(localUUID + " finger: " + finger.getUUID());
+        if (running) {
+          stabilizeForever();
+        } else {
+          if (!stopped.isDone()) {
+            stopped.complete(null);
+          }
         }
-        stabilizeForever();
       }
     }, 1, TimeUnit.SECONDS);
+  }
+
+  public void printFingerTable() {
+    System.out.println(localUUID + " predecessor: " + (predecessor != null ? predecessor.getUUID() : "null"));
+    System.out.println(localUUID + " successor: " + (successor != null ? successor.getUUID() : "null"));
+    for (final Peer finger : fingers) {
+          System.out.println(localUUID + " finger: " + finger.getUUID());
+    }
   }
 
   @Override
