@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -35,7 +36,7 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
 public class PeerExchangeOverlay implements Overlay {
   private final JsonProtocol jsonProtocol;
   private final List<PeerExchangePeer> peers = new LinkedList<>();
-  private final UUID uuid;
+  private final int uuid;
   private final List<CompletionStage<Void>> peersReceivingFutures = new LinkedList<>();
   private final Map<Integer, CompletableFuture<Void>> waitingForConnections = new HashMap<>();
   private volatile CompletableFuture<Void> started = null;
@@ -49,7 +50,7 @@ public class PeerExchangeOverlay implements Overlay {
     this.jsonProtocol = jsonProtocol;
     jsonProtocol.registerType(PeerId.class);
     jsonProtocol.registerType(KnownPeers.class);
-    uuid = UUID.randomUUID();
+    uuid = new Random().nextInt();
   }
 
   @Override
@@ -94,7 +95,7 @@ public class PeerExchangeOverlay implements Overlay {
    * Announce the known peers to all other peers
    */
   public CompletionStage<Void> announceKnownPeers() {
-    List<CompletableFuture<Void>> peerAnnouncedToFutures;
+    List<CompletableFuture<UUID>> peerAnnouncedToFutures;
     synchronized (peers) {
       // Announce known peers to all connected peers
       peerAnnouncedToFutures = peers.stream()
@@ -106,7 +107,7 @@ public class PeerExchangeOverlay implements Overlay {
         peerAnnouncedToFutures.toArray(new CompletableFuture[peerAnnouncedToFutures.size()]));
   }
 
-  private CompletionStage<Void> announceKnownPeers(final Peer peer) {
+  private CompletionStage<UUID> announceKnownPeers(final Peer peer) {
     return peer.send(getKnownPeers());
   }
 
@@ -182,7 +183,7 @@ public class PeerExchangeOverlay implements Overlay {
   private CompletionStage<Void> acceptPeerAnnouncement(final KnownPeers knownPeers) {
           final Set<PeerInfo> newKnownPeers = knownPeers.peerInfos
               // Filter out self
-              .stream().filter(peerInfo -> !peerInfo.uuid.equals(uuid)).collect(Collectors.toSet());
+              .stream().filter(peerInfo -> !(peerInfo.uuid == uuid)).collect(Collectors.toSet());
           final Set<PeerInfo> existingKnownPeers = getKnownPeers().peerInfos;
 
           // Find new peers not known before
@@ -191,7 +192,7 @@ public class PeerExchangeOverlay implements Overlay {
           // Filter out all peers with a lower uuid than self, to avoid connecting from
           // both sides
           final Set<PeerInfo> peersToConnectTo = newKnownPeers.stream()
-              .filter(peerInfo -> peerInfo.uuid.compareTo(uuid) > 0)
+              .filter(peerInfo -> peerInfo.uuid > uuid)
               .collect(Collectors.toSet());
 
           if (peersToConnectTo.size() == 0) {
@@ -232,7 +233,7 @@ public class PeerExchangeOverlay implements Overlay {
     }
   }
 
-  public UUID getUUID() {
+  public int getUUID() {
     return uuid;
   }
 
@@ -242,6 +243,10 @@ public class PeerExchangeOverlay implements Overlay {
 
   public int getListeningPort() {
     return jsonProtocol.getListeningPort();
+  }
+
+  public InetSocketAddress getListeningAddress() {
+    return jsonProtocol.getListeningAddress();
   }
 
   @Override

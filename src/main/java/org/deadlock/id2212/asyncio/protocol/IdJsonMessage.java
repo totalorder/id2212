@@ -41,4 +41,8 @@ public class IdJsonMessage extends HeadedJson<IntegerUUIDHeader> {
   public String getString() {
     return super.getString();
   }
+
+  public String toString() {
+    return getObject(typeToClass.get(header.integer)).getClass().getSimpleName() + getString();
+  }
 }

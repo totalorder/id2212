@@ -168,6 +168,11 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
   }
 
   @Override
+  public InetSocketAddress getListeningAddress() {
+    return asyncIO.getListeningAddress();
+  }
+
+  @Override
   public CompletionStage<BytesClient> connect(final InetSocketAddress inetSocketAddress) {
     return asyncIO.connect(inetSocketAddress).thenApply(this::createClient);
   }

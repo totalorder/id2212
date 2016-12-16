@@ -5,7 +5,6 @@ import org.deadlock.id2212.asyncio.protocol.IdJsonMessage;
 import java.io.Closeable;
 import java.net.InetSocketAddress;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -19,6 +18,8 @@ public interface Overlay extends Closeable {
 
   int getListeningPort();
 
+  InetSocketAddress getListeningAddress();
+
   List<CompletionStage<Peer>> broadcast(Object message);
 
   int registerType(final Class clazz);
@@ -29,5 +30,5 @@ public interface Overlay extends Closeable {
 
   void setOnPeerConnectedCallback(final Consumer<Peer> callback);
 
-  UUID getUUID();
+  int getUUID();
 }

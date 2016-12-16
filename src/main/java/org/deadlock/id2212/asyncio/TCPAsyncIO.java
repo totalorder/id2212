@@ -26,6 +26,7 @@ public class TCPAsyncIO implements AsyncIO {
   private int listeningPort = 0;
   private volatile CompletableFuture<Void> started = null;
   private volatile CompletableFuture<Void> closed = null;
+  private InetSocketAddress listeningAddress;
 
   @Override
   public void close() throws IOException {
@@ -267,6 +268,7 @@ public class TCPAsyncIO implements AsyncIO {
 
       serverSocket.bind(new InetSocketAddress(port));
       listeningPort = serverSocket.getLocalPort();
+      listeningAddress = (InetSocketAddress)serverSocket.getLocalSocketAddress();
       serverChannel.configureBlocking(false);
       serverChannel.register(selector, SelectionKey.OP_ACCEPT);
     } catch (IOException e) {
@@ -325,5 +327,10 @@ public class TCPAsyncIO implements AsyncIO {
   @Override
   public int getListeningPort() {
     return listeningPort;
+  }
+
+  @Override
+  public InetSocketAddress getListeningAddress() {
+    return listeningAddress;
   }
 }

@@ -97,6 +97,11 @@ public abstract class HeaderProtocol<ClientInterface> implements Protocol<Client
   }
 
   @Override
+  public InetSocketAddress getListeningAddress() {
+    return messageLengthProtocol.getListeningAddress();
+  }
+
+  @Override
   public CompletionStage<ClientInterface> connect(final InetSocketAddress inetSocketAddress) {
     return messageLengthProtocol.connect(inetSocketAddress).thenApply(this::createClient);
   }

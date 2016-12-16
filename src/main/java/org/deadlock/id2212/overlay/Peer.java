@@ -7,7 +7,9 @@ import java.util.UUID;
 import java.util.concurrent.CompletionStage;
 
 public interface Peer extends Client<IdJsonMessage> {
-  CompletionStage<Void> send(Object object);
+  CompletionStage<UUID> send(Object object);
+  CompletionStage<UUID> send(Object object, UUID uuid);
+  CompletionStage<IdJsonMessage> receive(UUID uuid);
 
-  UUID getUUID();
+  int getUUID();
 }

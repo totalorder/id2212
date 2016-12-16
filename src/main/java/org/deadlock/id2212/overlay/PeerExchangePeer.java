@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletionStage;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -20,7 +19,7 @@ import java.util.function.Consumer;
  * exposing other messages to the client.
  */
 public class PeerExchangePeer implements Peer {
-  private final UUID uuid;
+  private final int uuid;
   private final int listeningPort;
   private final IdJsonClient jsonClient;
   private Consumer<IdJsonMessage> onMessageReceivedCallback;
@@ -30,7 +29,7 @@ public class PeerExchangePeer implements Peer {
   private List<IdJsonMessage> callbackQueue = new ArrayList<>();
   private List<IdJsonMessage> overlayCallbackQueue = new ArrayList<>();
 
-  public PeerExchangePeer(final UUID uuid, int listeningPort, final IdJsonClient jsonClient) {
+  public PeerExchangePeer(final int uuid, int listeningPort, final IdJsonClient jsonClient) {
     this.uuid = uuid;
     this.listeningPort = listeningPort;
     this.jsonClient = jsonClient;
@@ -39,12 +38,25 @@ public class PeerExchangePeer implements Peer {
   }
 
   @Override
-  public CompletionStage<Void> send(Object object) {
+  public CompletionStage<UUID> send(Object object) {
     return jsonClient.send(object);
   }
 
   @Override
-  public UUID getUUID() {
+  public CompletionStage<UUID> send(final Object object, final UUID uuid) {
+    return jsonClient.send(object, uuid);
+  }
+
+  @Override
+  public CompletionStage<IdJsonMessage> receive(final UUID uuid) {
+    return jsonClient.receive(uuid).thenApply(message -> {
+      System.out.println("received reply from " + this.uuid + ":" + message);
+      return message;
+    });
+  }
+
+  @Override
+  public int getUUID() {
     return uuid;
   }
 

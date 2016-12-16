@@ -17,4 +17,6 @@ public interface AsyncIO extends Closeable {
   CompletionStage<AsyncIOClient> connect(InetSocketAddress address);
 
   int getListeningPort();
+
+  InetSocketAddress getListeningAddress();
 }

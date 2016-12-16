@@ -58,9 +58,11 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
     }
 
     public void onMessageReceived(final HeadedMessage<IntegerUUIDHeader> message) {
+
       final IdJsonMessage jsonMessage = new IdJsonMessage(mapper, typeToClass, message.getHeader(), message.getBytes());
       receivedMessages.add(jsonMessage);
 
+//      System.out.println("Received " + jsonMessage);
       CompletableFuture<IdJsonMessage> waiting;
       synchronized (waitingForReplies) {
         waiting = waitingForReplies.remove(jsonMessage.getUUID());
@@ -81,18 +83,19 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
     }
 
     @Override
-    public CompletionStage<Void> send(final Object serializable) {
+    public CompletionStage<UUID> send(final Object serializable) {
       return send(serializable, UUID.randomUUID());
     }
 
     @Override
-    public CompletionStage<Void> send(final Object serializable, final UUID uuid) {
+    public CompletionStage<UUID> send(final Object serializable, final UUID uuid) {
       final Integer type = classToType.get(serializable.getClass());
       if (type == null) {
         throw new RuntimeException("Type for class " + serializable.getClass().getName() + " does not exists");
       }
       try {
-        return integerHeaderClient.send(new IntegerUUIDHeader(type, uuid), mapper.writeValueAsBytes(serializable));
+        return integerHeaderClient.send(new IntegerUUIDHeader(type, uuid), mapper.writeValueAsBytes(serializable))
+            .thenApply(ignored -> uuid);
       } catch (JsonProcessingException e) {
         throw new RuntimeException(e);
       }
@@ -142,6 +145,11 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
   @Override
   public int getListeningPort() {
     return integerHeaderProtocol.getListeningPort();
+  }
+
+  @Override
+  public InetSocketAddress getListeningAddress() {
+    return integerHeaderProtocol.getListeningAddress();
   }
 
   @Override

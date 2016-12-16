@@ -12,5 +12,7 @@ public interface Protocol<Client> extends Closeable {
 
   int getListeningPort();
 
+  InetSocketAddress getListeningAddress();
+
   CompletionStage<Client> connect(InetSocketAddress inetSocketAddress);
 }

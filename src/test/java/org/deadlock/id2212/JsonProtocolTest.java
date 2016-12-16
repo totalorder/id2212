@@ -29,6 +29,7 @@ public class JsonProtocolTest {
   public void setUp() throws Exception {
     jsonProtocol = JsonProtocol.createDefault();
     jsonProtocol.registerType(TestJsonObject.class);
+    jsonProtocol.registerType(InetSocketAddress.class);
   }
 
   @After

@@ -99,17 +99,17 @@ public class OverlayTest {
     // Peer 3 should be connected after exchange
     final Peer connectedPeer3 = connectedPeer3Future.toCompletableFuture().get();
 
-    final Set<UUID> overlay1ExpectedKnownPeers = new HashSet<>();
+    final Set<Integer> overlay1ExpectedKnownPeers = new HashSet<>();
     overlay1ExpectedKnownPeers.add(overlay2.getUUID());
     overlay1ExpectedKnownPeers.add(overlay3.getUUID());
     assertEquals(overlay1ExpectedKnownPeers, overlay1.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
 
-    final Set<UUID> overlay2ExpectedKnownPeers = new HashSet<>();
+    final Set<Integer> overlay2ExpectedKnownPeers = new HashSet<>();
     overlay2ExpectedKnownPeers.add(overlay1.getUUID());
     overlay2ExpectedKnownPeers.add(overlay3.getUUID());
     assertEquals(overlay2ExpectedKnownPeers, overlay2.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
 
-    final Set<UUID> overlay3ExpectedKnownPeers = new HashSet<>();
+    final Set<Integer> overlay3ExpectedKnownPeers = new HashSet<>();
     overlay3ExpectedKnownPeers.add(overlay1.getUUID());
     overlay3ExpectedKnownPeers.add(overlay2.getUUID());
     assertEquals(overlay3ExpectedKnownPeers, overlay3.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
@@ -136,17 +136,17 @@ public class OverlayTest {
     overlay3.waitForConnectedPeers(2).toCompletableFuture().get();
 
     // Then
-    final Set<UUID> overlay1ExpectedKnownPeers = new HashSet<>();
+    final Set<Integer> overlay1ExpectedKnownPeers = new HashSet<>();
     overlay1ExpectedKnownPeers.add(overlay2.getUUID());
     overlay1ExpectedKnownPeers.add(overlay3.getUUID());
     assertEquals(overlay1ExpectedKnownPeers, overlay1.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
 
-    final Set<UUID> overlay2ExpectedKnownPeers = new HashSet<>();
+    final Set<Integer> overlay2ExpectedKnownPeers = new HashSet<>();
     overlay2ExpectedKnownPeers.add(overlay1.getUUID());
     overlay2ExpectedKnownPeers.add(overlay3.getUUID());
     assertEquals(overlay2ExpectedKnownPeers, overlay2.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));
 
-    final Set<UUID> overlay3ExpectedKnownPeers = new HashSet<>();
+    final Set<Integer> overlay3ExpectedKnownPeers = new HashSet<>();
     overlay3ExpectedKnownPeers.add(overlay1.getUUID());
     overlay3ExpectedKnownPeers.add(overlay2.getUUID());
     assertEquals(overlay3ExpectedKnownPeers, overlay3.getKnownPeers().peerInfos.stream().map(peerInfo -> peerInfo.uuid).collect(Collectors.toSet()));

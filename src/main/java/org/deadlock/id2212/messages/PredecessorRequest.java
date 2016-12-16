@@ -1,9 +1,8 @@
 package org.deadlock.id2212.messages;
 
-public class RequestSchedule {
+public class PredecessorRequest {
   public boolean dummyValue;
 
-  public RequestSchedule() {
-
+  public PredecessorRequest() {
   }
 }

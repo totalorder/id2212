@@ -4,10 +4,10 @@ import java.net.InetSocketAddress;
 import java.util.UUID;
 
 public class PeerInfo {
-  public UUID uuid;
+  public int uuid;
   public InetSocketAddress address;
 
-  public PeerInfo(final UUID uuid, final InetSocketAddress address) {
+  public PeerInfo(final int uuid, final InetSocketAddress address) {
     this.uuid = uuid;
     this.address = address;
   }
@@ -25,12 +25,12 @@ public class PeerInfo {
 
     PeerInfo peerInfo = (PeerInfo) o;
 
-    return uuid.equals(peerInfo.uuid);
+    return uuid == peerInfo.uuid;
 
   }
 
   @Override
   public int hashCode() {
-    return uuid.hashCode();
+    return Integer.hashCode(uuid);
   }
 }
