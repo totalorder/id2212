@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
@@ -49,6 +50,7 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
     private Consumer<IdJsonMessage> onMessageReceivedCallback;
     private AsyncQueue<IdJsonMessage> receivedMessages = new AsyncQueue<>();
     private List<IdJsonMessage> callbackQueue = new ArrayList<>();
+    private final Map<UUID, CompletableFuture<IdJsonMessage>> waitingForReplies = new HashMap<>();
 
     public JsonProtocolClient(final IntegerHeaderClient integerHeaderClient) {
       this.integerHeaderClient = integerHeaderClient;
@@ -58,6 +60,17 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
     public void onMessageReceived(final HeadedMessage<IntegerUUIDHeader> message) {
       final IdJsonMessage jsonMessage = new IdJsonMessage(mapper, typeToClass, message.getHeader(), message.getBytes());
       receivedMessages.add(jsonMessage);
+
+      CompletableFuture<IdJsonMessage> waiting;
+      synchronized (waitingForReplies) {
+        waiting = waitingForReplies.remove(jsonMessage.getUUID());
+      }
+
+      if (waiting != null) {
+        waiting.complete(jsonMessage);
+        return;
+      }
+
       if (onMessageReceivedCallback != null) {
         onMessageReceivedCallback.accept(jsonMessage);
       } else {
@@ -82,6 +95,14 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
         return integerHeaderClient.send(new IntegerUUIDHeader(type, uuid), mapper.writeValueAsBytes(serializable));
       } catch (JsonProcessingException e) {
         throw new RuntimeException(e);
+      }
+    }
+
+    @Override
+    public CompletionStage<IdJsonMessage> receive(final UUID uuid) {
+      synchronized (waitingForReplies) {
+        waitingForReplies.putIfAbsent(uuid, new CompletableFuture<>());
+        return waitingForReplies.get(uuid);
       }
     }
 

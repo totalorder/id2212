@@ -5,4 +5,5 @@ import java.util.concurrent.CompletionStage;
 
 public interface IdJsonClient extends JsonClient<IdJsonMessage> {
   CompletionStage<Void> send(Object serializable, UUID uuid);
+  CompletionStage<IdJsonMessage> receive(UUID uuid);
 }
