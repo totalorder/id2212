@@ -14,6 +14,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -27,6 +30,7 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
   private final Map<Integer, Class> typeToClass = new HashMap<>();
   private final Map<Class, Integer> classToType = new HashMap<>();
   private int nextTypeId = 0;
+  private ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
 
   public JsonProtocol(final IntegerHeaderProtocol integerHeaderProtocol) {
     this.mapper = new ObjectMapper().registerModule(new JavaTimeModule());
@@ -105,7 +109,14 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
     public CompletionStage<IdJsonMessage> receive(final UUID uuid) {
       synchronized (waitingForReplies) {
         waitingForReplies.putIfAbsent(uuid, new CompletableFuture<>());
-        return waitingForReplies.get(uuid);
+        final CompletableFuture<IdJsonMessage> messageFuture = waitingForReplies.get(uuid);
+        scheduledExecutorService.schedule(() -> {
+          if (!messageFuture.isDone()) {
+            messageFuture.completeExceptionally(new RuntimeException("Time out!"));
+          }
+          return null;
+        }, 700, TimeUnit.MILLISECONDS);
+        return messageFuture;
       }
     }
 

@@ -240,24 +240,23 @@ public class DHT implements Closeable {
 
   public CompletionStage<Void> heartbeat() {
     if (predecessor != null && predecessor != me) {
-      heartbeats.putIfAbsent(predecessor, Instant.now());
-      if (heartbeats.get(predecessor).isBefore(Instant.now().minus(500, ChronoUnit.MILLIS))) {
-        System.out.println(localUUID + " predecessor timed out!");
-        predecessor = null;
-        return completedFuture(null);
-      }
+      System.out.println(localUUID + " Sending heartbeat!");
+      final CompletableFuture<IdJsonMessage> replyFuture = predecessor.send(new HeartbeatRequest()).thenCompose(predecessor::receive).toCompletableFuture();
 
-      System.out.println(localUUID + " Sending heartbe3at!");
-      return predecessor.send(new HeartbeatRequest())
-          .thenCompose(predecessor::receive)
-          .thenApply(ignored -> {
-            if (predecessor != null) {
-              heartbeats.put(predecessor, Instant.now());
-            }
-            return null;
-          });
+      scheduledExecutorService.schedule(() -> {
+        if (!replyFuture.isDone()) {
+          replyFuture.completeExceptionally(new RuntimeException("Heartbeat time out!"));
+          System.out.println(localUUID + " predecessor heartbeat timed out !");
+          predecessor = null;
+        } else {
+          System.out.println(localUUID + " predecessor heartbeat received on time");
+        }
+        return null;
+      }, 400, TimeUnit.MILLISECONDS);
+
+      return replyFuture.thenApply(ignored -> null);
     } else {
-      System.out.println(localUUID + "Sending NO heartbe3at!");
+      System.out.println(localUUID + " Sending NO heartbeat!");
     }
     return completedFuture(null);
   }
@@ -294,6 +293,9 @@ public class DHT implements Closeable {
           final PredecessorResponse predecessorResponse = reply.getObject(PredecessorResponse.class);
           return getOrConnectPeer(predecessorResponse.predecessor, predecessorResponse.address)
               .thenCompose(this::updateSuccessorAndSendNotification);
+        }).exceptionally(throwable -> {
+          successor = null;
+          return null;
         });
   }
 
@@ -367,7 +369,7 @@ public class DHT implements Closeable {
     // Announce known peers to all connected peers every second
     scheduledExecutorService.schedule(() -> {
       try {
-//        heartbeat().toCompletableFuture().get();
+        heartbeat().toCompletableFuture().get();
         stabilize().toCompletableFuture().get();
         fixFingers().toCompletableFuture().get();
 
