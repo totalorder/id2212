@@ -7,53 +7,59 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Scanner;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 public class Main {
   public static void main(String args[]) {
-//    final ScheduleManager scheduleManager = ScheduleManager.createDefault();
+      final DHT dht = DHT.createDefault();
 //    try {
-      if (args.length != 1 && args.length != 2 && args.length != 4) {
-        System.out.println("Usage: schedule-file [listen-port] [connect-to-ip] [connect-to-port]");
+      if (args.length != 1 && args.length != 3) {
+        System.out.println("Usage: <listen-port> [connect-to-ip] [connect-to-port]");
         return;
       }
 
-      final String scheduleFile = args[0];
+      final int listenPort = Integer.parseInt(args[0]);
+      dht.start(listenPort).toCompletableFuture().join();
 
-      final int listenPort = Integer.parseInt(args[1]);
-      try {
-        final List<Instant> schedule = Files.lines(Paths.get(scheduleFile))
-            .map(line -> LocalDateTime.parse(line).toInstant(ZoneOffset.UTC))
-            .collect(Collectors.toList());
-//        schedule.forEach(scheduleManager::addTime);
-      } catch (IOException e) {
-        e.printStackTrace();
-        return;
+      if (args.length == 3) {
+        final String connectToIp = args[1];
+        final int connectToPort = Integer.parseInt(args[2]);
+        dht.join(new InetSocketAddress(connectToIp, connectToPort)).toCompletableFuture().join();
+      } else if (args.length == 1) {
+        dht.initiate();
       }
 
-      if (args.length == 4) {
-        final String connectToIp = args[2];
-        final int connectToPort = Integer.parseInt(args[3]);
+      final Scanner in = new Scanner(System.in);
+      while (true) {
+        try {
+        final String command = in.nextLine();
+          if (command.equals("probe")) {
+            System.out.println(dht.probeRing().toCompletableFuture().get(3000, TimeUnit.MILLISECONDS));
+          } else if (command.startsWith("put")) {
+            final String[] tokens = command.split("\\s");
+            if (tokens.length != 3) {
+              System.out.println("Usage: put <key> <value>");
+              continue;
+            }
 
-//        scheduleManager.start(listenPort).toCompletableFuture().get();
-//        scheduleManager.connect(new InetSocketAddress(connectToIp, connectToPort)).toCompletableFuture().get();
-      } else if (args.length == 2) {
-//        scheduleManager.start(listenPort).toCompletableFuture().get();
-      } else {
-//        scheduleManager.start(5000).toCompletableFuture().get();
+            dht.set(tokens[1], tokens[2]).toCompletableFuture().get(3000, TimeUnit.MILLISECONDS);
+          } else if (command.startsWith("get")) {
+            final String[] tokens = command.split("\\s");
+            if (tokens.length != 2) {
+              System.out.println("Usage: get <key>");
+              continue;
+            }
+            System.out.println(dht.get(tokens[1]).toCompletableFuture().get(3000, TimeUnit.MILLISECONDS));
+          }
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+          e.printStackTrace();
+        }
       }
-
-//      final Instant scheduledTime = scheduleManager.findTime(2).toCompletableFuture().get();
-//      System.out.println("Found time! " + scheduledTime);
-//      Thread.sleep(5000);
-//    } catch (InterruptedException | ExecutionException e) {
-//      if (e.getCause() instanceof NoMatchingTimeException) {
-//        System.out.println("Error: " + e.getCause().getMessage());
-//      } else {
-//        e.printStackTrace();
-//      }
-//    }
   }
 }

@@ -26,6 +26,8 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
@@ -71,6 +73,7 @@ public class DHT implements Closeable {
   private boolean logMessages = false;
   private Timeout timeout = new Timeout();
   private Map<Integer, String> store = new HashMap<>();
+  private Instant lastLog = Instant.now();
 
   public DHT(final Overlay overlay) {
     overlay.setOnMessageReceivedCallback(this::onMessageReceived);
@@ -163,15 +166,15 @@ public class DHT implements Closeable {
   }
 
   private void onReplicationRequest(final ReplicationRequest replicationRequest) {
-    log("onReplicationRequest %s", replicationRequest.store.size());
+//    log("onReplicationRequest %s", replicationRequest.store.size());
     replicationRequest.store.entrySet().forEach(entry -> {
 
-      if (predecessor == null || !isBetween(entry.getKey(), predecessor.getUUID() + 1, localUUID)) {
-        log("storing key %s", entry.getKey());
+//      if (predecessor == null || !isBetween(entry.getKey(), predecessor.getUUID() + 1, localUUID)) {
+//        log("storing key %s", entry.getKey());
         store.put(entry.getKey(), entry.getValue());
-      } else {
-        log("not storing key %s", entry.getKey());
-      }
+//      } else {
+//        log("not storing key %s", entry.getKey());
+//      }
     });
   }
 
@@ -256,23 +259,26 @@ public class DHT implements Closeable {
 //  }
 
   private CompletionStage<Peer> findSuccessor(int uuid) {
+    if (predecessor == null && (successor == null || successor == me)) {
+      return completedFuture(me);
+    }
 //    log("findSuccessor %s", uuid);
 
     if (successor != null && isBetween(uuid, localUUID + 1, successor.getUUID()) || successor == me) {
-      log("findSuccessor %s is between successor", uuid);
+//      log("findSuccessor %s is between successor", uuid);
       return completedFuture(successor);
     } else {
-      log("%s is not between %s and %s", uuid, localUUID + 1, successor != null ? successor.getUUID() : null);
+//      log("%s is not between %s and %s", uuid, localUUID + 1, successor != null ? successor.getUUID() : null);
       final Peer closestFinger = getClosestPreceedingFinger(uuid);
       if (closestFinger == me) {
-        log("findSuccessor %s closestFinger == me", uuid);
+//        log("findSuccessor %s closestFinger == me", uuid);
         if (successor == null) {
           return completedFuture(me);
         }
         return completedFuture(successor);
       }
 
-      log("findSuccessor %s asking successor %s", uuid, closestFinger.getUUID());
+//      log("findSuccessor %s asking successor %s", uuid, closestFinger.getUUID());
       return timeout.catchTimeout(closestFinger.send(new SuccessorRequest(uuid))
           .thenApply(uuid1 -> {
 //            log("sent successor find with uuid %s", uuid1);
@@ -281,7 +287,7 @@ public class DHT implements Closeable {
           .thenComposeAsync(closestFinger::receive)
           .thenCompose(reply -> {
             final SuccessorResponse successorResponse = reply.getObject(SuccessorResponse.class);
-            log("got remote reply %s for %s", successorResponse.successor, uuid);
+//            log("got remote reply %s for %s", successorResponse.successor, uuid);
             return getOrConnectPeer(successorResponse.successor, successorResponse.address);
           }), () -> {
         log("successor request timeout for %s to %s", uuid, closestFinger.getUUID());
@@ -435,7 +441,7 @@ public class DHT implements Closeable {
           }
         });
       } else {
-        log("Sending NO heartbeat!");
+//        log("Sending NO heartbeat!");
       }
       return completedFuture(null);
     }), "heartbeat");
@@ -450,7 +456,8 @@ public class DHT implements Closeable {
     return async(() -> {
       lastProbeReceieved = new CompletableFuture<>();
       probeRingUntilResponse();
-      return lastProbeReceieved;
+//      return lastProbeReceieved;
+      return timeout.timeout(lastProbeReceieved, 1000);
     });
   }
 
@@ -583,7 +590,7 @@ public class DHT implements Closeable {
 
       final int nextPosition = (localUUID + (int) Math.pow(K, nextFingerToFix)) % size;
       return findSuccessor(nextPosition).thenApply(successor -> {
-      System.out.println(localUUID + " set finger " + nextFingerToFix + " to " + successor.getUUID() + " at position " + nextPosition);
+//      System.out.println(localUUID + " set finger " + nextFingerToFix + " to " + successor.getUUID() + " at position " + nextPosition);
         fingers.set(nextFingerToFix, successor);
         nextFingerToFix = nextFingerToFix + 1;
         return null;
@@ -701,8 +708,13 @@ public class DHT implements Closeable {
       } catch (Exception e) {
         e.printStackTrace();
       } finally {
-        log("predecessor: " + (predecessor != null ? predecessor.getUUID() : "null"));
-        log("successor: " + (successor != null ? successor.getUUID() : "null"));
+        if (lastLog.isBefore(Instant.now().minus(10, ChronoUnit.SECONDS))) {
+          lastLog = Instant.now();
+//          log("predecessor: " + (predecessor != null ? predecessor.getUUID() : "null"));
+//          log("successor: " + (successor != null ? successor.getUUID() : "null"));
+          printFingerTable();
+        }
+
         if (running) {
 //          log("stabilize forever");
           stabilizeForever();
@@ -719,6 +731,7 @@ public class DHT implements Closeable {
   public void printFingerTable() {
     log("predecessor: " + (predecessor != null ? predecessor.getUUID() : "null"));
     log("successor: " + (successor != null ? successor.getUUID() : "null"));
+    log("keys: " + store.size());
     for (final Peer finger : fingers) {
           System.out.println(localUUID + " finger: " + finger.getUUID());
     }
