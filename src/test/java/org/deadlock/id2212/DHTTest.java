@@ -29,10 +29,6 @@ public class DHTTest {
 
   @Before
   public void setUp() throws Exception {
-//    dht1 = DHT.createDefault(Integer.MAX_VALUE / 2 + 1);
-//    dht2 = DHT.createDefault(Integer.MAX_VALUE);
-//    dht3 = DHT.createDefault(-Integer.MAX_VALUE / 2);
-//
     dht1 = DHT.createDefault(100);
     dht2 = DHT.createDefault(200);
     dht3 = DHT.createDefault(300);
@@ -99,10 +95,7 @@ public class DHTTest {
     Collections.rotate(expectedUUIDs, -expectedUUIDs.indexOf(probedUUIDs.get(0)));
     assertEquals(expectedUUIDs, probedUUIDs);
 
-//    final List<CompletionStage<Void>> fixes = nodes.stream().map(DHT::waitForFingersFixed).collect(Collectors.toList());
-//    fixes.forEach(fix -> fix.toCompletableFuture().join());
     System.out.println(connected.get(0).probeRing().toCompletableFuture().get());
-//    nodes.forEach(DHT::printFingerTable);
   }
 
   @Test
@@ -227,7 +220,7 @@ public class DHTTest {
     fingers1.toCompletableFuture().get();
     fingers2.toCompletableFuture().get();
     fingers3.toCompletableFuture().get();
-//
+
     dht1.printFingerTable();
     dht2.printFingerTable();
     dht3.printFingerTable();
@@ -238,7 +231,7 @@ public class DHTTest {
     fingers1.toCompletableFuture().get();
     fingers2.toCompletableFuture().get();
     fingers3.toCompletableFuture().get();
-//
+
     dht1.printFingerTable();
     dht2.printFingerTable();
     dht3.printFingerTable();
