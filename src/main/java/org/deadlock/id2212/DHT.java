@@ -179,7 +179,7 @@ public class DHT implements Closeable {
   }
 
   private String getKey(final int key) {
-    log("get key", key);
+    log("get key %s", key);
     if (predecessor == null || isBetween(key, predecessor.getUUID() + 1, localUUID)) {
       return store.get(key);
     } else {
@@ -188,7 +188,7 @@ public class DHT implements Closeable {
   }
 
   private void setKey(final int key, final String value) {
-    log("set key", key);
+    log("set key %s %s", key, value);
     if (predecessor == null || isBetween(key, predecessor.getUUID() + 1, localUUID)) {
       store.put(key, value);
     } else {

@@ -5,6 +5,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.ByteBuffer;
 import java.nio.channels.*;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.NoSuchElementException;
@@ -31,6 +32,8 @@ public class TCPAsyncIO implements AsyncIO {
   private volatile CompletableFuture<Void> closed = null;
   private InetSocketAddress listeningAddress;
   private Consumer<AsyncIOClient> clientBrokenPipeCallback;
+  private long lastExecution = System.currentTimeMillis();
+  private ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
 
   @Override
   public void close() throws IOException {
@@ -256,7 +259,14 @@ public class TCPAsyncIO implements AsyncIO {
         }
 
         if (closed == null) {
-          selectForever();
+          if (System.currentTimeMillis() - lastExecution <= 1) {
+            selectForever();
+          } else {
+            scheduledExecutorService.schedule(() -> {
+              selectForever();
+              return null;
+            }, 10, TimeUnit.MILLISECONDS);
+          }
         } else if (!closed.isDone()) {
           doClose();
         }
