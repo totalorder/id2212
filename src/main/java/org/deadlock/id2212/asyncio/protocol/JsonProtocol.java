@@ -113,7 +113,7 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
       synchronized (waitingForReplies) {
         waitingForReplies.putIfAbsent(uuid, new CompletableFuture<>());
         final CompletableFuture<IdJsonMessage> messageFuture = waitingForReplies.get(uuid);
-        return timeout.timeout(messageFuture, 900);
+        return timeout.timeout(messageFuture, 500);
       }
     }
 

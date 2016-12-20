@@ -42,13 +42,13 @@ import static org.deadlock.id2212.util.CompletableExtras.async;
 public class DHT implements Closeable {
   private final Overlay overlay;
   private final LinkedList<Peer> fingers = new LinkedList<>();
-  private final int numFingers = 5;
+  private final int numFingers = 10;
   private int localUUID;
   private Peer predecessor;
   private Peer successor;
   private final Map<Integer, Peer> connectedPeers = new HashMap<>();
   private int nextFingerToFix;
-  private final double K = 256;
+  private final double K = 12;
   private ScheduledExecutorService scheduledExecutorService;
   private CompletableFuture<Void> isStable = new CompletableFuture<>();
   private CompletableFuture<Void> fingersFixed = new CompletableFuture<>();
@@ -135,47 +135,82 @@ public class DHT implements Closeable {
   }
 
   private void onPredecessorNotification(final Peer peer, final IdJsonMessage message, final PredecessorNotification predecessorNotification) {
-    if (predecessor == null || isBetween(predecessorNotification.uuid, predecessor.getUUID(), localUUID)) {
+//    log("received predecessor notif from " + peer.getUUID());
+    if (predecessor == null || isBetween(predecessorNotification.uuid, predecessor.getUUID() + 1, localUUID)) {
       predecessor = peer;
     }
   }
 
   private void onSuccessorRequest(final Peer peer, final IdJsonMessage message, final SuccessorRequest successorRequest) {
-    if (isBetween(successorRequest.uuid, localUUID, successor.getUUID())) {
-      peer.send(new SuccessorResponse(localUUID, overlay.getListeningAddress()), message.getUUID());
-    } else {
-      final Peer closestFinger = getClosestPreceedingFinger(successorRequest.uuid);
-      if (closestFinger != me) {
-        closestFinger.send(successorRequest)
-            .thenCompose(peer::receive)
-            .thenCompose(reply ->
-                    peer.send(reply, message.getUUID())
-            );
-      }
-    }
+      findSuccessor(successorRequest.uuid).thenCompose(successorReceived -> {
+        log("remote successor response reply for %s to %s with uuid %s", successorRequest.uuid, peer.getUUID(), message.getUUID());
+        return peer.send(new SuccessorResponse(successorReceived.getUUID(), successorReceived.getListeningAddress()), message.getUUID());
+      }).exceptionally(throwable -> { throwable.printStackTrace(); return null; });
+//    if (isBetween(successorRequest.uuid, localUUID + 1, successor.getUUID())) {
+//      log("local A to successor response for %s with %s to %s", successorRequest.uuid, successor.getUUID(), peer.getUUID());
+//      if (successor == me) {
+//        peer.send(new SuccessorResponse(localUUID, getListeningAddress()), message.getUUID());
+//      } else {
+//        peer.send(new SuccessorResponse(successor.getUUID(), successor.getListeningAddress()), message.getUUID());
+//      }
+//    } else {
+//      log("remote to successor response for %s", successorRequest.uuid);
+//      findSuccessor(successorRequest.uuid).thenCompose(successorReceived -> {
+//        log("remote successor response reply for %s to %s with uuid %s", successorRequest.uuid, peer.getUUID(), message.getUUID());
+//        return peer.send(new SuccessorResponse(successorReceived.getUUID(), successorReceived.getListeningAddress()), message.getUUID());
+//      });
+//      final Peer closestFinger = getClosestPreceedingFinger(successorRequest.uuid);
+//      if (closestFinger != me) {
+//        closestFinger.send(successorRequest)
+//            .thenCompose(peer::receive)
+//            .thenCompose(reply -> {
+//              log("remote successor response reply for %s to %s", successorRequest.uuid, peer);
+//              return peer.send(reply, message.getUUID());
+//            });
+//      } else {
+//        log("local B to successor response for %s with %s to ", successorRequest.uuid, successor.getUUID());
+//        peer.send(new SuccessorResponse(localUUID, getListeningAddress()), message.getUUID());
+//      }
+//    }
+  }
+
+  public CompletionStage<Peer> getSuccessor(int uuid) {
+    return async(() -> findSuccessor(uuid));
   }
 
   private CompletionStage<Peer> findSuccessor(int uuid) {
-    if (successor != null && isBetween(uuid, localUUID + 1, successor.getUUID())) {
-      return completedFuture(me);
+    log("findSuccessor %s", uuid);
+    if (successor != null && isBetween(uuid, localUUID + 1, successor.getUUID()) || successor == me) {
+      log("findSuccessor %s is between successor", uuid);
+      return completedFuture(successor);
     } else {
       final Peer closestFinger = getClosestPreceedingFinger(uuid);
       if (closestFinger == me) {
+        log("findSuccessor %s closestFinger == me", uuid);
         if (successor == null) {
           return completedFuture(me);
         }
         return completedFuture(successor);
       }
 
+      log("findSuccessor %s asking successor %s", uuid, closestFinger.getUUID());
       return timeout.catchTimeout(closestFinger.send(new SuccessorRequest(uuid))
+          .thenApply(uuid1 -> {
+            log("sent successor find with uuid %s", uuid1);
+            return uuid1;
+          })
           .thenComposeAsync(closestFinger::receive)
           .thenCompose(reply -> {
             final SuccessorResponse successorResponse = reply.getObject(SuccessorResponse.class);
+            log("got remote reply %s for %s", successorResponse.successor, uuid);
             return getOrConnectPeer(successorResponse.successor, successorResponse.address);
           }), () -> {
-            fingers.remove(closestFinger);
-            fingers.addFirst(me);
-            return me;
+        log("successor request timeout for %s to %s", uuid, closestFinger.getUUID());
+        return me;
+//            fingers.remove(closestFinger);
+//            fingers.addFirst(me);
+//            throw new RuntimeException("Successor request timeout!");
+//            return me;
           });
     }
   }
@@ -242,6 +277,10 @@ public class DHT implements Closeable {
               .thenApply(successor -> {
                 log("Found successor " + successor.getUUID());
                 this.successor = successor;
+//                fingers.clear();
+//                while (fingers.size() < numFingers) {
+//                  fingers.add(successor);
+//                }
                 return null;
               }));
     });
@@ -265,8 +304,8 @@ public class DHT implements Closeable {
     return fingersFixed;
   }
 
-  public CompletionStage<Peer> findSuccessor(final Peer peer, final int uuid) {
-//    System.out.println(localUUID + " findSuccessor at " + peer.getUUID() + " for " + uuid);
+  private CompletionStage<Peer> findSuccessor(final Peer peer, final int uuid) {
+    log("initial findSuccessor at " + peer.getUUID() + " for " + uuid);
     return peer.send(new SuccessorRequest(uuid))
         .thenCompose(peer::receive)
         .thenCompose(reply -> {
@@ -428,8 +467,12 @@ public class DHT implements Closeable {
   }
 
   private CompletionStage<Void> updateSuccessorAndSendNotification(final Peer successorsPredecessor) {
-    if (successorsPredecessor != null && isBetween(successorsPredecessor.getUUID(), localUUID, successor.getUUID())) {
+    if (successorsPredecessor != null && isBetween(successorsPredecessor.getUUID(), localUUID + 1, successor.getUUID())) {
       successor = successorsPredecessor;
+    }
+
+    if (successor == me) {
+      return completedFuture(null);
     }
 
 //    log("Sending predecessor notification to " + successor.getUUID());
@@ -471,13 +514,27 @@ public class DHT implements Closeable {
   }
 
   private Peer getClosestPreceedingFinger(final int uuid) {
-    for (final Peer peer : Lists.reverse(fingers)) {
-      if (isBetween(uuid, localUUID, peer.getUUID())) {
-        return peer;
-      }
+    if (successor == null) {
+      return me;
     }
+    return successor;
 
-    return me;
+//    if (uuid == 244 || uuid == 201) {
+//      printFingerTable();
+//    }
+//    for (final Peer peer : Lists.reverse(fingers)) {
+//      if (isBetween(peer.getUUID(), localUUID, uuid)) {
+//        return peer;
+//      }
+//    }
+//
+//    log("closest is me for %s", uuid);
+////    printFingerTable();
+//    if (successor != me) {
+//      return successor;
+//    }
+
+//    return me;
   }
 
   private boolean isBetween(final int uuid, final int from, final int to) {
@@ -485,9 +542,9 @@ public class DHT implements Closeable {
       return true;
     }
     if (to > from) {
-      return uuid > from && uuid < to;
+      return uuid >= from && uuid <= to;
     } else {
-      return uuid > from || uuid < to;
+      return uuid >= from || uuid <= to;
     }
   }
 
@@ -515,7 +572,7 @@ public class DHT implements Closeable {
         heartbeat().toCompletableFuture().get();
 //        ForkJoinPool.commonPool().submit(ForkJoinTask.adapt())
         stabilize().toCompletableFuture().get(15000, TimeUnit.MILLISECONDS);
-        fixFingers().toCompletableFuture().get();
+//        fixFingers().toCompletableFuture().get();
       } catch (Exception e) {
         e.printStackTrace();
       } finally {
@@ -573,7 +630,7 @@ public class DHT implements Closeable {
 
     @Override
     public InetSocketAddress getListeningAddress() {
-      throw new RuntimeException("This is me");
+      return overlay.getListeningAddress();
     }
 
     @Override
