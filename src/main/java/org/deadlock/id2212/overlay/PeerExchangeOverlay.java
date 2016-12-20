@@ -45,12 +45,21 @@ public class PeerExchangeOverlay implements Overlay {
   private BiConsumer<Peer, IdJsonMessage> onMessageReceivedCallback;
   private Consumer<Peer> onPeerAcceptedCallback;
   private Consumer<Peer> onPeerConnectedCallback;
+  private Consumer<Peer> onPeerBrokenPipeCallback;
 
-  public PeerExchangeOverlay(final JsonProtocol jsonProtocol) {
+  public PeerExchangeOverlay(final JsonProtocol jsonProtocol, final Integer uuid) {
     this.jsonProtocol = jsonProtocol;
     jsonProtocol.registerType(PeerId.class);
     jsonProtocol.registerType(KnownPeers.class);
-    uuid = new Random().nextInt();
+    if (uuid != null) {
+      this.uuid = uuid;
+    } else {
+      this.uuid = new Random().nextInt();
+    }
+  }
+
+  public PeerExchangeOverlay(final JsonProtocol jsonProtocol) {
+    this(jsonProtocol, null);
   }
 
   @Override
@@ -129,30 +138,13 @@ public class PeerExchangeOverlay implements Overlay {
     started = new CompletableFuture<>();
     return listen(port).thenCompose(ignored -> {
       acceptingForeverFuture = acceptForever().toCompletableFuture();
-      announceKnownPeersForever();
+      started.complete(null);
       return started;
     });
   }
 
   private CompletionStage<Void> acceptForever() {
     return accept().thenCompose(ignored -> acceptForever());
-  }
-
-  private void announceKnownPeersForever() {
-    // Announce known peers to all connected peers every second
-    scheduledExecutorService.schedule(() -> {
-      if (started != null) {
-        started.complete(null);
-      }
-
-      try {
-        announceKnownPeers().toCompletableFuture().get();
-      } catch (InterruptedException | ExecutionException e) {
-        e.printStackTrace();
-      } finally {
-        announceKnownPeersForever();
-      }
-    }, 1, TimeUnit.SECONDS);
   }
 
   /**
@@ -213,9 +205,10 @@ public class PeerExchangeOverlay implements Overlay {
   }
 
   private PeerExchangePeer createPeer(final PeerId peerId, final IdJsonClient jsonClient) {
-    final PeerExchangePeer peer = new PeerExchangePeer(peerId.uuid, peerId.listeningPort, jsonClient);
+    final PeerExchangePeer peer = new PeerExchangePeer(peerId.uuid, peerId.listeningAddress, jsonClient);
     peer.setOnOverlayMessageReceivedCallback(message -> onOverlayMessageReceived(peer, message));
     peer.setOnMessageReceivedCallback(message -> onMessageReceivedCallback.accept(peer, message));
+    peer.setOnBrokenPipeCallback(() -> onPeerBrokenPipeCallback.accept(peer));
     synchronized (peers) {
       peers.add(peer);
       // Notify any listeners that N peers are connected
@@ -238,7 +231,7 @@ public class PeerExchangeOverlay implements Overlay {
   }
 
   private PeerId getPeerId() {
-    return new PeerId(uuid, getListeningPort());
+    return new PeerId(uuid, getListeningAddress());
   }
 
   public int getListeningPort() {
@@ -279,6 +272,13 @@ public class PeerExchangeOverlay implements Overlay {
     this.onPeerConnectedCallback = callback;
   }
 
+
+  @Override
+  public void setOnPeerBrokenPipeCallback(Consumer<Peer> callback) {
+    this.onPeerBrokenPipeCallback = callback;
+  }
+
+
   @Override
   public void close() throws IOException {
     if (started == null) {
@@ -299,5 +299,9 @@ public class PeerExchangeOverlay implements Overlay {
 
   public static PeerExchangeOverlay createDefault() {
     return new PeerExchangeOverlay(JsonProtocol.createDefault());
+  }
+
+  public static PeerExchangeOverlay createDefault(final int uuid) {
+    return new PeerExchangeOverlay(JsonProtocol.createDefault(), uuid);
   }
 }

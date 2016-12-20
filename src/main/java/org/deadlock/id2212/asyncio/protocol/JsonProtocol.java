@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.deadlock.id2212.asyncio.AsyncQueue;
+import org.deadlock.id2212.util.Timeout;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -30,7 +31,7 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
   private final Map<Integer, Class> typeToClass = new HashMap<>();
   private final Map<Class, Integer> classToType = new HashMap<>();
   private int nextTypeId = 0;
-  private ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+  private Timeout timeout = new Timeout();
 
   public JsonProtocol(final IntegerHeaderProtocol integerHeaderProtocol) {
     this.mapper = new ObjectMapper().registerModule(new JavaTimeModule());
@@ -55,10 +56,12 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
     private AsyncQueue<IdJsonMessage> receivedMessages = new AsyncQueue<>();
     private List<IdJsonMessage> callbackQueue = new ArrayList<>();
     private final Map<UUID, CompletableFuture<IdJsonMessage>> waitingForReplies = new HashMap<>();
+    private Runnable onBrokenPipeCallback;
 
     public JsonProtocolClient(final IntegerHeaderClient integerHeaderClient) {
       this.integerHeaderClient = integerHeaderClient;
       integerHeaderClient.setOnMessageReceivedCallback(this::onMessageReceived);
+      integerHeaderClient.setOnBrokenPipeCallback(this::onBrokenPipe);
     }
 
     public void onMessageReceived(final HeadedMessage<IntegerUUIDHeader> message) {
@@ -66,13 +69,13 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
       final IdJsonMessage jsonMessage = new IdJsonMessage(mapper, typeToClass, message.getHeader(), message.getBytes());
       receivedMessages.add(jsonMessage);
 
-//      System.out.println("Received " + jsonMessage);
       CompletableFuture<IdJsonMessage> waiting;
       synchronized (waitingForReplies) {
         waiting = waitingForReplies.remove(jsonMessage.getUUID());
       }
 
       if (waiting != null) {
+//        System.out.println("Received " + jsonMessage);
         waiting.complete(jsonMessage);
         return;
       }
@@ -110,13 +113,7 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
       synchronized (waitingForReplies) {
         waitingForReplies.putIfAbsent(uuid, new CompletableFuture<>());
         final CompletableFuture<IdJsonMessage> messageFuture = waitingForReplies.get(uuid);
-        scheduledExecutorService.schedule(() -> {
-          if (!messageFuture.isDone()) {
-            messageFuture.completeExceptionally(new RuntimeException("Time out!"));
-          }
-          return null;
-        }, 700, TimeUnit.MILLISECONDS);
-        return messageFuture;
+        return timeout.timeout(messageFuture, 900);
       }
     }
 
@@ -134,12 +131,28 @@ public class JsonProtocol implements Protocol<IdJsonClient> {
         callbackQueue.clear();
       }
       callbackQueueCopy.stream().forEach(callback::accept);
+    }
 
+    @Override
+    public void setOnBrokenPipeCallback(final Runnable callback) {
+      onBrokenPipeCallback = callback;
+    }
+
+    @Override
+    public void onBrokenPipe() {
+      if (onBrokenPipeCallback != null) {
+        onBrokenPipeCallback.run();
+      }
     }
 
     @Override
     public InetSocketAddress getAddress() {
       return integerHeaderClient.getAddress();
+    }
+
+    @Override
+    public void close() throws IOException {
+      integerHeaderClient.close();
     }
   }
 

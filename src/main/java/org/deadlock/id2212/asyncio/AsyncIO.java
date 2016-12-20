@@ -10,6 +10,7 @@ import java.util.function.Consumer;
 public interface AsyncIO extends Closeable {
 
   void setClientDataReceivedCallback(BiConsumer<AsyncIOClient, ByteBuffer> clientDataReceivedCallback);
+  void setClientBrokenPipeCallback(Consumer<AsyncIOClient> clientBrokenPipeCallback);
 
   CompletionStage<Void> startServer(int port,
                                     Consumer<AsyncIOClient> clientAcceptedCallback);
@@ -19,4 +20,6 @@ public interface AsyncIO extends Closeable {
   int getListeningPort();
 
   InetSocketAddress getListeningAddress();
+
+  class BrokenPipeException extends Exception {}
 }

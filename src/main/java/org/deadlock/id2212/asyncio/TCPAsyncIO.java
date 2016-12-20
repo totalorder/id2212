@@ -5,7 +5,10 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.ByteBuffer;
 import java.nio.channels.*;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.NoSuchElementException;
+import java.util.Queue;
 import java.util.concurrent.*;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -27,6 +30,7 @@ public class TCPAsyncIO implements AsyncIO {
   private volatile CompletableFuture<Void> started = null;
   private volatile CompletableFuture<Void> closed = null;
   private InetSocketAddress listeningAddress;
+  private Consumer<AsyncIOClient> clientBrokenPipeCallback;
 
   @Override
   public void close() throws IOException {
@@ -45,6 +49,12 @@ public class TCPAsyncIO implements AsyncIO {
   }
 
   class TCPAsyncIOClient implements AsyncIOClient {
+    @Override
+    public void close() throws IOException {
+      channel.close();
+      onBrokenPipe();
+    }
+
     class SendBuffer {
       private final CompletableFuture<Void> sentFuture;
       private final ByteBuffer byteBuffer;
@@ -60,8 +70,10 @@ public class TCPAsyncIO implements AsyncIO {
     private final Selector selector;
     private final ByteBuffer buffer;
     private int lastPosition = 0;
-    private ConcurrentLinkedDeque<SendBuffer> sendBuffers = new ConcurrentLinkedDeque<>();
+//    private ConcurrentLinkedDeque<SendBuffer> sendBuffers = new ConcurrentLinkedDeque<>();
+    private Deque<SendBuffer> sendBuffers = new ArrayDeque<>();
     private volatile SendBuffer currentlyWriting = null;
+    private volatile boolean brokenPipe = false;
 
     /**
      * Calls data received callback when data is received
@@ -144,10 +156,49 @@ public class TCPAsyncIO implements AsyncIO {
       }
     }
 
+    protected void onBrokenPipe() {
+      synchronized (channel) {
+        brokenPipe = true;
+
+//        System.out.println(Thread.currentThread().getName() + " Buffer size b: " + sendBuffers.size());
+
+//        System.out.println(Thread.currentThread().getName() + " Break!");
+        while (!sendBuffers.isEmpty()) {
+          final SendBuffer sendBuffer = sendBuffers.removeFirst();
+          if (sendBuffer != null) {
+            sendBuffer.sentFuture.completeExceptionally(new BrokenPipeException());
+          }
+        }
+
+        if (currentlyWriting != null) {
+          currentlyWriting.sentFuture.completeExceptionally(new BrokenPipeException());
+        }
+        currentlyWriting = null;
+
+//        System.out.println(Thread.currentThread().getName() + " Size! " + sendBuffers.size());
+      }
+
+      clientBrokenPipeCallback.accept(this);
+    }
+
     public CompletionStage<Void> send(final ByteBuffer byteBuffer) {
       final CompletableFuture<Void> sentFuture = new CompletableFuture<>();
-      sendBuffers.addLast(new SendBuffer(sentFuture, byteBuffer));
-      return sentFuture.thenCompose(ignored -> ensureStarted());
+//      System.out.println(Thread.currentThread().getName() + " enter");
+      synchronized (channel) {
+        if (brokenPipe) {
+          sentFuture.completeExceptionally(new BrokenPipeException());
+//          System.out.println(Thread.currentThread().getName() + " exit");
+          return sentFuture;
+        }
+
+//        System.out.println(Thread.currentThread().getName() + " Send!");
+        sendBuffers.addLast(new SendBuffer(sentFuture, byteBuffer));
+//        System.out.println(Thread.currentThread().getName() + " Buffer size a: " + sendBuffers.size());
+        final CompletableFuture<Void> voidCompletableFuture = sentFuture.thenComposeAsync(ignored -> ensureStarted());
+//        System.out.println(Thread.currentThread().getName() + " exit");
+        return voidCompletableFuture;
+      }
+
     }
 
     @Override
@@ -178,16 +229,21 @@ public class TCPAsyncIO implements AsyncIO {
       try {
         if (selector.selectNow() > 0) {
           for (final SelectionKey key : selector.selectedKeys()) {
-            if (key.isAcceptable()) {
-              accept(key.channel());
-            }
+            try {
+              if (key.isAcceptable()) {
+                accept(key.channel());
+              }
 
-            if (key.isReadable()) {
-              ((TCPAsyncIOClient)key.attachment()).onIsReadable();
-            }
+              if (key.isReadable()) {
+                ((TCPAsyncIOClient) key.attachment()).onIsReadable();
+              }
 
-            if (key.isWritable()) {
-              ((TCPAsyncIOClient)key.attachment()).onIsWritable();
+              if (key.isWritable()) {
+                ((TCPAsyncIOClient) key.attachment()).onIsWritable();
+              }
+            } catch (CancelledKeyException | IOException e) {
+              key.cancel();
+              ((TCPAsyncIOClient)key.attachment()).onBrokenPipe();
             }
           }
           selector.selectedKeys().clear();
@@ -254,6 +310,11 @@ public class TCPAsyncIO implements AsyncIO {
   @Override
   public void setClientDataReceivedCallback(final BiConsumer<AsyncIOClient, ByteBuffer> clientDataReceivedCallback) {
     this.clientDataReceivedCallback = clientDataReceivedCallback;
+  }
+
+  @Override
+  public void setClientBrokenPipeCallback(final Consumer<AsyncIOClient> clientBrokenPipeCallback) {
+    this.clientBrokenPipeCallback = clientBrokenPipeCallback;
   }
 
   @Override

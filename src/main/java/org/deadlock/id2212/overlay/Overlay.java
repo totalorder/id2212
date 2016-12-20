@@ -31,4 +31,6 @@ public interface Overlay extends Closeable {
   void setOnPeerConnectedCallback(final Consumer<Peer> callback);
 
   int getUUID();
+
+  void setOnPeerBrokenPipeCallback(Consumer<Peer> callback);
 }

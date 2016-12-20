@@ -21,11 +21,13 @@ public abstract class HeaderProtocol<ClientInterface> implements Protocol<Client
     private final AsyncQueue<HeadedMessage<Header>> receivedMessages = new AsyncQueue<>();
     private Consumer<HeadedMessage<Header>> onMessageReceivedCallback;
     private List<HeadedMessage<Header>> callbackQueue = new ArrayList<>();
+    private Runnable onBrokenPipeCallback;
 
     public HeaderProtocolClient(
         final BytesClient bytesClient) {
       this.bytesClient = bytesClient;
       bytesClient.setOnMessageReceivedCallback(this::onMessageReceived);
+      bytesClient.setOnBrokenPipeCallback(this::onBrokenPipe);
     }
 
     @Override
@@ -47,6 +49,18 @@ public abstract class HeaderProtocol<ClientInterface> implements Protocol<Client
         callbackQueue.clear();
       }
       callbackQueueCopy.stream().forEach(callback::accept);
+    }
+
+    @Override
+    public void setOnBrokenPipeCallback(final Runnable callback) {
+      onBrokenPipeCallback = callback;
+    }
+
+    @Override
+    public void onBrokenPipe() {
+      if (onBrokenPipeCallback != null) {
+        onBrokenPipeCallback.run();
+      }
     }
 
     abstract byte[] serializeHeader(final Header header);
@@ -72,6 +86,11 @@ public abstract class HeaderProtocol<ClientInterface> implements Protocol<Client
     @Override
     public InetSocketAddress getAddress() {
       return bytesClient.getAddress();
+    }
+
+    @Override
+    public void close() throws IOException {
+      bytesClient.close();
     }
   }
 

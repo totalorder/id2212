@@ -6,6 +6,7 @@ import org.deadlock.id2212.asyncio.protocol.MessageLengthProtocol;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -22,6 +23,11 @@ public class MessageLengthProtocolClientTest {
   @Before
   public void setUp() throws Exception {
     AsyncIOClient loopbackClient = new AsyncIOClient() {
+      @Override
+      public void close() throws IOException {
+
+      }
+
       public CompletionStage<Void> send(final ByteBuffer byteBuffer) {
         client.onDataReceived(byteBuffer);
         return new CompletableFuture<>();

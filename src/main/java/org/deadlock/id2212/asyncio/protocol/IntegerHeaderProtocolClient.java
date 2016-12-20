@@ -1,5 +1,6 @@
 package org.deadlock.id2212.asyncio.protocol;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.UUID;
 

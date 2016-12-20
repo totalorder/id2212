@@ -35,6 +35,7 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
     private ByteBuffer messageBuffer = null;
     private int messageLength;
     private List<byte[]> callbackQueue = new ArrayList<>();
+    private Runnable onBrokenPipeCallback;
 
     public MessageLengthProtocolClient(final AsyncIOClient asyncIOClient) {
       this.asyncIOClient = asyncIOClient;
@@ -134,6 +135,23 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
       }
       callbackQueueCopy.stream().forEach(callback::accept);
     }
+
+    @Override
+    public void setOnBrokenPipeCallback(final Runnable callback) {
+      onBrokenPipeCallback = callback;
+    }
+
+    @Override
+    public void onBrokenPipe() {
+      if (onBrokenPipeCallback != null) {
+        onBrokenPipeCallback.run();
+      }
+    }
+
+    @Override
+    public void close() throws IOException {
+      asyncIOClient.close();
+    }
   }
 
   private final AsyncIO asyncIO;
@@ -143,6 +161,7 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
   public MessageLengthProtocol(final AsyncIO asyncIO) {
     this.asyncIO = asyncIO;
     asyncIO.setClientDataReceivedCallback(this::onClientDataReceived);
+    asyncIO.setClientBrokenPipeCallback(this::onClientBrokenPipe);
   }
 
   @Override
@@ -184,6 +203,10 @@ public class MessageLengthProtocol implements Protocol<BytesClient> {
   private void onClientDataReceived(final AsyncIOClient asyncIOClient,
                                     final ByteBuffer buffer) {
     clientMap.get(asyncIOClient).onDataReceived(buffer);
+  }
+
+  private void onClientBrokenPipe(final AsyncIOClient asyncIOClient) {
+    clientMap.get(asyncIOClient).onBrokenPipe();
   }
 
   @Override

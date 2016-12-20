@@ -7,6 +7,8 @@ import org.deadlock.id2212.overlay.messages.KnownPeers;
 import org.deadlock.id2212.overlay.messages.PeerId;
 import org.deadlock.id2212.overlay.messages.PeerInfo;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,7 +22,7 @@ import java.util.function.Consumer;
  */
 public class PeerExchangePeer implements Peer {
   private final int uuid;
-  private final int listeningPort;
+  private final InetSocketAddress listeningAddress;
   private final IdJsonClient jsonClient;
   private Consumer<IdJsonMessage> onMessageReceivedCallback;
   private final AsyncQueue<IdJsonMessage> messages = new AsyncQueue<>();
@@ -28,13 +30,14 @@ public class PeerExchangePeer implements Peer {
   private Consumer<IdJsonMessage> onOverlayMessageReceivedCallback;
   private List<IdJsonMessage> callbackQueue = new ArrayList<>();
   private List<IdJsonMessage> overlayCallbackQueue = new ArrayList<>();
+  private Runnable onBrokenPipeCallback;
 
-  public PeerExchangePeer(final int uuid, int listeningPort, final IdJsonClient jsonClient) {
+  public PeerExchangePeer(final int uuid, InetSocketAddress listeningAddress, final IdJsonClient jsonClient) {
     this.uuid = uuid;
-    this.listeningPort = listeningPort;
+    this.listeningAddress = listeningAddress;
     this.jsonClient = jsonClient;
     jsonClient.setOnMessageReceivedCallback(this::onMessageReceived);
-
+    jsonClient.setOnBrokenPipeCallback(this::onBrokenPipe);
   }
 
   @Override
@@ -49,17 +52,13 @@ public class PeerExchangePeer implements Peer {
 
   @Override
   public CompletionStage<IdJsonMessage> receive(final UUID uuid) {
-    return jsonClient.receive(uuid).thenApply(message -> {
-      System.out.println("received reply from " + this.uuid + ":" + message);
-      return message;
-    });
+    return jsonClient.receive(uuid);
   }
 
   @Override
   public int getUUID() {
     return uuid;
   }
-
 
   @Override
   public void setOnMessageReceivedCallback(final Consumer<IdJsonMessage> callback) {
@@ -70,6 +69,18 @@ public class PeerExchangePeer implements Peer {
       callbackQueue.clear();
     }
     callbackQueueCopy.stream().forEach(callback::accept);
+  }
+
+  @Override
+  public void setOnBrokenPipeCallback(final Runnable callback) {
+    onBrokenPipeCallback = callback;
+  }
+
+  @Override
+  public void onBrokenPipe() {
+    if (onBrokenPipeCallback != null) {
+      onBrokenPipeCallback.run();
+    }
   }
 
   public void setOnOverlayMessageReceivedCallback(final Consumer<IdJsonMessage> callback) {
@@ -85,6 +96,11 @@ public class PeerExchangePeer implements Peer {
   @Override
   public InetSocketAddress getAddress() {
     return jsonClient.getAddress();
+  }
+
+  @Override
+  public InetSocketAddress getListeningAddress() {
+    return listeningAddress;
   }
 
   private synchronized Void onMessageReceived(final IdJsonMessage message) {
@@ -123,8 +139,11 @@ public class PeerExchangePeer implements Peer {
   }
 
   public PeerInfo getPeerInfo() {
-    final InetSocketAddress listeningAddress = new InetSocketAddress(
-        jsonClient.getAddress().getAddress(), listeningPort);
     return new PeerInfo(uuid, listeningAddress);
+  }
+
+  @Override
+  public void close() throws IOException {
+    jsonClient.close();
   }
 }
