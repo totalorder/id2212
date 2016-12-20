@@ -1,14 +1,20 @@
 package org.deadlock.id2212;
 
 import com.google.common.collect.Lists;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.deadlock.id2212.asyncio.AsyncIO;
 import org.deadlock.id2212.asyncio.protocol.IdJsonMessage;
+import org.deadlock.id2212.messages.GetKeyRequest;
+import org.deadlock.id2212.messages.GetKeyResponse;
 import org.deadlock.id2212.messages.HeartbeatRequest;
 import org.deadlock.id2212.messages.HeartbeatResponse;
 import org.deadlock.id2212.messages.PredecessorNotification;
 import org.deadlock.id2212.messages.PredecessorRequest;
 import org.deadlock.id2212.messages.PredecessorResponse;
+import org.deadlock.id2212.messages.ReplicationRequest;
 import org.deadlock.id2212.messages.RingProbe;
+import org.deadlock.id2212.messages.SetKeyRequest;
+import org.deadlock.id2212.messages.SetKeyResponse;
 import org.deadlock.id2212.messages.SuccessorRequest;
 import org.deadlock.id2212.messages.SuccessorResponse;
 import org.deadlock.id2212.overlay.Overlay;
@@ -18,10 +24,12 @@ import org.deadlock.id2212.util.Timeout;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -32,6 +40,7 @@ import java.util.function.Consumer;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static org.deadlock.id2212.util.CompletableExtras.async;
+import static org.deadlock.id2212.util.CompletableExtras.asyncApply;
 
 /**
  * Find a common time among N peers in schedule X
@@ -48,7 +57,8 @@ public class DHT implements Closeable {
   private Peer successor;
   private final Map<Integer, Peer> connectedPeers = new HashMap<>();
   private int nextFingerToFix;
-  private final double K = 12;
+  private final double K = 2;
+  private static final int size = (int)Math.pow(2, 8);
   private ScheduledExecutorService scheduledExecutorService;
   private CompletableFuture<Void> isStable = new CompletableFuture<>();
   private CompletableFuture<Void> fingersFixed = new CompletableFuture<>();
@@ -58,6 +68,7 @@ public class DHT implements Closeable {
   private CompletableFuture<RingProbe> lastProbeReceieved = new CompletableFuture<>();
   private boolean logMessages = false;
   private Timeout timeout = new Timeout();
+  private Map<Integer, String> store = new HashMap<>();
 
   public DHT(final Overlay overlay) {
     overlay.setOnMessageReceivedCallback(this::onMessageReceived);
@@ -65,16 +76,25 @@ public class DHT implements Closeable {
     overlay.setOnPeerConnectedCallback(this::onPeerConnected);
     overlay.setOnPeerBrokenPipeCallback(this::onPeerBrokenPipe);
 
+    overlay.registerType(GetKeyRequest.class);
+    overlay.registerType(GetKeyResponse.class);
     overlay.registerType(HeartbeatRequest.class);
     overlay.registerType(HeartbeatResponse.class);
     overlay.registerType(PredecessorNotification.class);
     overlay.registerType(PredecessorRequest.class);
     overlay.registerType(PredecessorResponse.class);
+    overlay.registerType(ReplicationRequest.class);
     overlay.registerType(RingProbe.class);
+    overlay.registerType(SetKeyRequest.class);
+    overlay.registerType(SetKeyResponse.class);
     overlay.registerType(SuccessorRequest.class);
     overlay.registerType(SuccessorResponse.class);
     this.overlay = overlay;
     localUUID = overlay.getUUID();
+  }
+
+  private int hash(final String key) {
+    return new BigInteger(DigestUtils.sha1(key.getBytes())).mod(BigInteger.valueOf(size)).intValue();
   }
 
   private void onPeerBrokenPipe(final Peer peer) {
@@ -110,7 +130,6 @@ public class DHT implements Closeable {
       } else {
         peer.send(new PredecessorResponse(null, null), message.getUUID());
       }
-
     } else if (message.isClass(SuccessorRequest.class)) {
       final SuccessorRequest successorRequest = message.getObject(SuccessorRequest.class);
       onSuccessorRequest(peer, message, successorRequest);
@@ -121,6 +140,52 @@ public class DHT implements Closeable {
       peer.send(new HeartbeatResponse(), message.getUUID());
     } else if (message.isClass(RingProbe.class)) {
       onRingProbe(message.getObject(RingProbe.class));
+    } else if (message.isClass(GetKeyRequest.class)) {
+      onGetKeyRequest(peer, message, message.getObject(GetKeyRequest.class));
+    } else if (message.isClass(SetKeyRequest.class)) {
+      final SetKeyRequest setKeyRequest = message.getObject(SetKeyRequest.class);
+      setKey(setKeyRequest.key, setKeyRequest.value);
+      peer.send(new SetKeyResponse(), message.getUUID());
+    } else if (message.isClass(ReplicationRequest.class)) {
+      onReplicationRequest(message.getObject(ReplicationRequest.class));
+    }
+  }
+
+  private void onGetKeyRequest(final Peer peer, final IdJsonMessage message, final GetKeyRequest getKeyRequest) {
+    peer.send(new GetKeyResponse(getKey(getKeyRequest.key)), message.getUUID()).exceptionally(throwable -> {
+      throwable.printStackTrace();
+      return null;
+    });
+  }
+
+  private void onReplicationRequest(final ReplicationRequest replicationRequest) {
+    log("onReplicationRequest %s", replicationRequest.store.size());
+    replicationRequest.store.entrySet().forEach(entry -> {
+
+      if (predecessor == null || !isBetween(entry.getKey(), predecessor.getUUID() + 1, localUUID)) {
+        log("storing key %s", entry.getKey());
+        store.put(entry.getKey(), entry.getValue());
+      } else {
+        log("not storing key %s", entry.getKey());
+      }
+    });
+  }
+
+  private String getKey(final int key) {
+    log("get key", key);
+    if (predecessor == null || isBetween(key, predecessor.getUUID() + 1, localUUID)) {
+      return store.get(key);
+    } else {
+      return null;
+    }
+  }
+
+  private void setKey(final int key, final String value) {
+    log("set key", key);
+    if (predecessor == null || isBetween(key, predecessor.getUUID() + 1, localUUID)) {
+      store.put(key, value);
+    } else {
+      throw new RuntimeException("Invalid key!");
     }
   }
 
@@ -143,7 +208,7 @@ public class DHT implements Closeable {
 
   private void onSuccessorRequest(final Peer peer, final IdJsonMessage message, final SuccessorRequest successorRequest) {
       findSuccessor(successorRequest.uuid).thenCompose(successorReceived -> {
-        log("remote successor response reply for %s to %s with uuid %s", successorRequest.uuid, peer.getUUID(), message.getUUID());
+//        log("remote successor response reply for %s to %s with uuid %s", successorRequest.uuid, peer.getUUID(), message.getUUID());
         return peer.send(new SuccessorResponse(successorReceived.getUUID(), successorReceived.getListeningAddress()), message.getUUID());
       }).exceptionally(throwable -> { throwable.printStackTrace(); return null; });
 //    if (isBetween(successorRequest.uuid, localUUID + 1, successor.getUUID())) {
@@ -178,34 +243,42 @@ public class DHT implements Closeable {
     return async(() -> findSuccessor(uuid));
   }
 
+  public CompletionStage<Peer> getSuccessor(final String key) {
+    return async(() -> findSuccessor(hash(key)));
+  }
+
+//  public CompletionStage<Peer> lookup(int uuid) {
+//    return async(() -> findSuccessor(uuid));
+//  }
+
   private CompletionStage<Peer> findSuccessor(int uuid) {
-    log("findSuccessor %s", uuid);
+//    log("findSuccessor %s", uuid);
     if (successor != null && isBetween(uuid, localUUID + 1, successor.getUUID()) || successor == me) {
-      log("findSuccessor %s is between successor", uuid);
+//      log("findSuccessor %s is between successor", uuid);
       return completedFuture(successor);
     } else {
       final Peer closestFinger = getClosestPreceedingFinger(uuid);
       if (closestFinger == me) {
-        log("findSuccessor %s closestFinger == me", uuid);
+//        log("findSuccessor %s closestFinger == me", uuid);
         if (successor == null) {
           return completedFuture(me);
         }
         return completedFuture(successor);
       }
 
-      log("findSuccessor %s asking successor %s", uuid, closestFinger.getUUID());
+//      log("findSuccessor %s asking successor %s", uuid, closestFinger.getUUID());
       return timeout.catchTimeout(closestFinger.send(new SuccessorRequest(uuid))
           .thenApply(uuid1 -> {
-            log("sent successor find with uuid %s", uuid1);
+//            log("sent successor find with uuid %s", uuid1);
             return uuid1;
           })
           .thenComposeAsync(closestFinger::receive)
           .thenCompose(reply -> {
             final SuccessorResponse successorResponse = reply.getObject(SuccessorResponse.class);
-            log("got remote reply %s for %s", successorResponse.successor, uuid);
+//            log("got remote reply %s for %s", successorResponse.successor, uuid);
             return getOrConnectPeer(successorResponse.successor, successorResponse.address);
           }), () -> {
-        log("successor request timeout for %s to %s", uuid, closestFinger.getUUID());
+//        log("successor request timeout for %s to %s", uuid, closestFinger.getUUID());
         return me;
 //            fingers.remove(closestFinger);
 //            fingers.addFirst(me);
@@ -230,7 +303,7 @@ public class DHT implements Closeable {
   }
 
   public static DHT createDefault() {
-    return new DHT(PeerExchangeOverlay.createDefault());
+    return new DHT(PeerExchangeOverlay.createDefault(new Random().nextInt(size)));
   }
 
   public static DHT createDefault(final int uuid) {
@@ -411,6 +484,16 @@ public class DHT implements Closeable {
 //    return done.get().g;
 //  }
 
+  public CompletionStage<Void> replicate() {
+    return handleErrors(async(() -> {
+      if (successor != null && successor != me) {
+        return successor.send(new ReplicationRequest(store)).thenApply(ignored -> null);
+      }
+
+      return completedFuture(null);
+    }), "replicate");
+  }
+
   public CompletionStage<Void> stabilize() {
     return handleErrors(async(() -> {
       if (successor == me && predecessor == null && !isAlone.isDone()) {
@@ -537,6 +620,38 @@ public class DHT implements Closeable {
 //    return me;
   }
 
+  public CompletionStage<String> get(final String key) {
+    return async(() -> {
+      final int hash = hash(key);
+      return findSuccessor(hash).thenCompose(peer -> {
+          if (peer == me) {
+            return completedFuture(getKey(hash));
+          } else {
+            return peer.send(new GetKeyRequest(hash))
+                .thenCompose(peer::receive)
+                .thenApply(reply ->
+                    reply.getObject(GetKeyResponse.class).value);
+          }
+      });
+    });
+  }
+
+  public CompletionStage<Void> set(final String key, final String value) {
+    return async(() -> {
+      final int hash = hash(key);
+      return findSuccessor(hash).thenCompose(peer -> {
+        if (peer == me) {
+          setKey(hash, value);
+          return completedFuture(null);
+        } else {
+          return peer.send(new SetKeyRequest(hash, value))
+              .thenCompose(peer::receive)
+              .thenApply(reply -> null);
+        }
+      });
+    });
+  }
+
   private boolean isBetween(final int uuid, final int from, final int to) {
     if (to == from) {
       return true;
@@ -572,6 +687,7 @@ public class DHT implements Closeable {
         heartbeat().toCompletableFuture().get();
 //        ForkJoinPool.commonPool().submit(ForkJoinTask.adapt())
         stabilize().toCompletableFuture().get(15000, TimeUnit.MILLISECONDS);
+        replicate().toCompletableFuture().get();
 //        fixFingers().toCompletableFuture().get();
       } catch (Exception e) {
         e.printStackTrace();

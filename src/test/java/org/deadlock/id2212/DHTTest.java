@@ -1,6 +1,7 @@
 package org.deadlock.id2212;
 
 import org.deadlock.id2212.messages.RingProbe;
+import org.deadlock.id2212.overlay.Peer;
 import org.deadlock.id2212.overlay.PeerExchangeOverlay;
 import org.junit.After;
 import org.junit.Before;
@@ -98,10 +99,10 @@ public class DHTTest {
     Collections.rotate(expectedUUIDs, -expectedUUIDs.indexOf(probedUUIDs.get(0)));
     assertEquals(expectedUUIDs, probedUUIDs);
 
-    final List<CompletionStage<Void>> fixes = nodes.stream().map(DHT::waitForFingersFixed).collect(Collectors.toList());
-    fixes.forEach(fix -> fix.toCompletableFuture().join());
+//    final List<CompletionStage<Void>> fixes = nodes.stream().map(DHT::waitForFingersFixed).collect(Collectors.toList());
+//    fixes.forEach(fix -> fix.toCompletableFuture().join());
     System.out.println(connected.get(0).probeRing().toCompletableFuture().get());
-    nodes.forEach(DHT::printFingerTable);
+//    nodes.forEach(DHT::printFingerTable);
   }
 
   @Test
@@ -145,7 +146,69 @@ public class DHTTest {
   }
 
   @Test
-  public void canLookup() throws Exception {
+  public void canGetAndSet() throws Exception {
+    dht1.start(0);
+    dht2.start(0);
+    dht3.start(0);
+
+    dht1.initiate();
+    dht2.join(dht1.getListeningAddress()).toCompletableFuture().get();
+    dht3.join(dht1.getListeningAddress()).toCompletableFuture().get();
+
+    dht1.waitForStable().toCompletableFuture().get();
+    dht2.waitForStable().toCompletableFuture().get();
+    dht3.waitForStable().toCompletableFuture().get();
+
+    dht1.set("key", "val").toCompletableFuture().get();
+    assertEquals(dht3.get("key").toCompletableFuture().get(), "val");
+  }
+
+  @Test
+  public void canReplicate() throws Exception {
+    dht1.start(0);
+    dht2.start(0);
+    dht3.start(0);
+
+    dht1.initiate();
+    dht2.join(dht1.getListeningAddress()).toCompletableFuture().get();
+    dht3.join(dht1.getListeningAddress()).toCompletableFuture().get();
+
+    dht1.waitForStable().toCompletableFuture().get();
+    dht2.waitForStable().toCompletableFuture().get();
+    dht3.waitForStable().toCompletableFuture().get();
+
+    final Peer owner = dht1.getSuccessor("key").toCompletableFuture().get();
+    dht1.set("key", "val").toCompletableFuture().get();
+    assertEquals(dht3.get("key").toCompletableFuture().get(), "val");
+
+    dht1.waitForStable().toCompletableFuture().get();
+    dht2.waitForStable().toCompletableFuture().get();
+    dht3.waitForStable().toCompletableFuture().get();
+    Thread.sleep(1500);
+
+    if (dht1.getUUID() == owner.getUUID()) {
+      dht1.stop().toCompletableFuture().get();
+      dht2.waitForStable().toCompletableFuture().get();
+      dht3.waitForStable().toCompletableFuture().get();
+      assertEquals(dht2.get("key").toCompletableFuture().get(), "val");
+      assertEquals(dht3.get("key").toCompletableFuture().get(), "val");
+    } else if (dht2.getUUID() == owner.getUUID()) {
+      dht2.stop().toCompletableFuture().get();
+      dht1.waitForStable().toCompletableFuture().get();
+      dht3.waitForStable().toCompletableFuture().get();
+      assertEquals(dht1.get("key").toCompletableFuture().get(), "val");
+      assertEquals(dht3.get("key").toCompletableFuture().get(), "val");
+    } else if (dht3.getUUID() == owner.getUUID()) {
+      dht3.stop().toCompletableFuture().get();
+      dht1.waitForStable().toCompletableFuture().get();
+      dht2.waitForStable().toCompletableFuture().get();
+      assertEquals(dht1.get("key").toCompletableFuture().get(), "val");
+      assertEquals(dht2.get("key").toCompletableFuture().get(), "val");
+    }
+  }
+
+  @Test
+  public void canGetSuccessor() throws Exception {
     dht1.start(0);
     dht2.start(0);
     dht3.start(0);
@@ -240,11 +303,7 @@ public class DHTTest {
     dht1.initiate();
     dht2.join(dht1.getListeningAddress()).toCompletableFuture().get();
 
-//    System.out.println(dht2.probeRing().toCompletableFuture().get());
-
-    System.out.println("STOPPING!");
     dht1.stop().toCompletableFuture().get();
-    System.out.println("Stopped!");
     dht2.waitForAlone().toCompletableFuture().get();
   }
 }
