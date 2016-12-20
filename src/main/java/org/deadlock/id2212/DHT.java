@@ -42,7 +42,6 @@ import java.util.function.Consumer;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static org.deadlock.id2212.util.CompletableExtras.async;
-import static org.deadlock.id2212.util.CompletableExtras.asyncApply;
 
 /**
  * Find a common time among N peers in schedule X
@@ -59,7 +58,6 @@ public class DHT implements Closeable {
   private Peer successor;
   private final Map<Integer, Peer> connectedPeers = new HashMap<>();
   private int nextFingerToFix;
-//  private final double K = 2;
   private static final int size = (int)Math.pow(2, 10);
   private static final int K = (int)Math.pow(size, 1f / 10);
 
@@ -104,8 +102,13 @@ public class DHT implements Closeable {
     return new BigInteger(DigestUtils.sha1(key.getBytes())).mod(BigInteger.valueOf(size)).intValue();
   }
 
+  /**
+   * If a peer disconnects, remove it from successor, predecessor and fingers
+   *
+   * @param peer The peer that disconnected
+   */
   private void onPeerBrokenPipe(final Peer peer) {
-//    log("broken pipe: " + peer.getUUID());
+    log("peer disconnected: %s", peer.getUUID());
     if (successor == peer) {
       successor = null;
     }
@@ -117,47 +120,70 @@ public class DHT implements Closeable {
     while (fingers.remove(peer)) {
       fingers.addFirst(me);
     }
-    log("done breaking");
   }
 
+  /**
+   * Receive messages and execute the relevant callbacks
+   * @param peer
+   * @param message
+   */
   private void onMessageReceived(final Peer peer, final IdJsonMessage message) {
     if (!running) {
       return;
     }
 
-    if (logMessages) {
-      log("received " + message);
-    }
-
-//    System.out.println(localUUID + " received " + message);
+    // Receive all types of messages
     if (message.isClass(PredecessorRequest.class)) {
-      if (predecessor != null) {
-//        log("Sending predecessor response: %s, %s", predecessor.getUUID(), predecessor.getListeningAddress());
-        peer.send(new PredecessorResponse(predecessor.getUUID(), predecessor.getListeningAddress()), message.getUUID());
-      } else {
-        peer.send(new PredecessorResponse(null, null), message.getUUID());
-      }
+      onPredecessorRequest(peer, message);
     } else if (message.isClass(SuccessorRequest.class)) {
       final SuccessorRequest successorRequest = message.getObject(SuccessorRequest.class);
       onSuccessorRequest(peer, message, successorRequest);
     } else if (message.isClass(PredecessorNotification.class)) {
       final PredecessorNotification predecessorNotification = message.getObject(PredecessorNotification.class);
-      onPredecessorNotification(peer, message, predecessorNotification);
+      onPredecessorNotification(peer, predecessorNotification);
     } else  if (message.isClass(HeartbeatRequest.class)) {
-      peer.send(new HeartbeatResponse(), message.getUUID());
+      onHeartbeatRequest(peer, message);
     } else if (message.isClass(RingProbe.class)) {
       onRingProbe(message.getObject(RingProbe.class));
     } else if (message.isClass(GetKeyRequest.class)) {
       onGetKeyRequest(peer, message, message.getObject(GetKeyRequest.class));
     } else if (message.isClass(SetKeyRequest.class)) {
       final SetKeyRequest setKeyRequest = message.getObject(SetKeyRequest.class);
-      setKey(setKeyRequest.key, setKeyRequest.value);
-      peer.send(new SetKeyResponse(), message.getUUID());
+      onSetKeyRequest(peer, message, setKeyRequest);
     } else if (message.isClass(ReplicationRequest.class)) {
       onReplicationRequest(message.getObject(ReplicationRequest.class));
     }
   }
 
+  /**
+   * When a HeartbeatRequest is received, reply with a HeartbeatResponse
+   */
+  private void onHeartbeatRequest(final Peer peer, final IdJsonMessage message) {
+    peer.send(new HeartbeatResponse(), message.getUUID());
+  }
+
+  /**
+   * When a PredecessorRequest is received, reply with the our predecessor or null
+   */
+  private void onPredecessorRequest(final Peer peer, final IdJsonMessage message) {
+    if (predecessor != null) {
+      peer.send(new PredecessorResponse(predecessor.getUUID(), predecessor.getListeningAddress()), message.getUUID());
+    } else {
+      peer.send(new PredecessorResponse(null, null), message.getUUID());
+    }
+  }
+
+  /**
+   * When a SetKeyRequest is received, set the key locally
+   */
+  private void onSetKeyRequest(final Peer peer, final IdJsonMessage message, final SetKeyRequest setKeyRequest) {
+    setKey(setKeyRequest.key, setKeyRequest.value);
+    peer.send(new SetKeyResponse(), message.getUUID());
+  }
+
+  /**
+   * When a GetKeyRequest is received, reply with the value of the key
+   */
   private void onGetKeyRequest(final Peer peer, final IdJsonMessage message, final GetKeyRequest getKeyRequest) {
     peer.send(new GetKeyResponse(getKey(getKeyRequest.key)), message.getUUID()).exceptionally(throwable -> {
       throwable.printStackTrace();
@@ -165,18 +191,53 @@ public class DHT implements Closeable {
     });
   }
 
+  /**
+   * When a ReplicationRequest is received, update the local store with the data
+   */
   private void onReplicationRequest(final ReplicationRequest replicationRequest) {
-//    log("onReplicationRequest %s", replicationRequest.store.size());
     replicationRequest.store.entrySet().forEach(entry -> {
-
-//      if (predecessor == null || !isBetween(entry.getKey(), predecessor.getUUID() + 1, localUUID)) {
-//        log("storing key %s", entry.getKey());
         store.put(entry.getKey(), entry.getValue());
-//      } else {
-//        log("not storing key %s", entry.getKey());
-//      }
     });
   }
+
+  /**
+   * When a RingProbe is received, complete lastProbeReceived if it came from us, otherwise
+   * add our id and pass it on
+   */
+  private void onRingProbe(final RingProbe ringProbe) {
+    if (ringProbe.nodes.get(0) == localUUID) {
+      lastProbeReceieved.complete(ringProbe);
+      lastProbeReceieved = new CompletableFuture<>();
+    } else if (successor != null && successor != me){
+      ringProbe.nodes.add(localUUID);
+      successor.send(ringProbe);
+    }
+  }
+
+  /**
+   * When a PredecessorNotification is received, update the predecessor if it's in the range, or current is null
+   */
+  private void onPredecessorNotification(final Peer peer, final PredecessorNotification predecessorNotification) {
+    if (predecessor == null || isBetween(predecessorNotification.uuid, predecessor.getUUID() + 1, localUUID)) {
+      predecessor = peer;
+    }
+  }
+
+  /**
+   * When a SuccessorRequest is made, reply with the successor for that uuid, possibly asking another node
+   * to find the answer
+   */
+  private void onSuccessorRequest(final Peer peer, final IdJsonMessage message, final SuccessorRequest successorRequest) {
+    findSuccessor(successorRequest.uuid)
+        .thenCompose(successorReceived ->
+            peer.send(new SuccessorResponse(
+                successorReceived.getUUID(), successorReceived.getListeningAddress()), message.getUUID()))
+        .exceptionally(throwable -> {
+          throwable.printStackTrace();
+          return null;
+        });
+  }
+
 
   private String getKey(final int key) {
     log("get key %s", key);
@@ -196,110 +257,46 @@ public class DHT implements Closeable {
     }
   }
 
-  private void onRingProbe(final RingProbe ringProbe) {
-    if (ringProbe.nodes.get(0) == localUUID) {
-      lastProbeReceieved.complete(ringProbe);
-      lastProbeReceieved = new CompletableFuture<>();
-    } else if (successor != null && successor != me){
-      ringProbe.nodes.add(localUUID);
-      successor.send(ringProbe);
-    }
-  }
-
-  private void onPredecessorNotification(final Peer peer, final IdJsonMessage message, final PredecessorNotification predecessorNotification) {
-//    log("received predecessor notif from " + peer.getUUID());
-    if (predecessor == null || isBetween(predecessorNotification.uuid, predecessor.getUUID() + 1, localUUID)) {
-      predecessor = peer;
-    }
-  }
-
-  private void onSuccessorRequest(final Peer peer, final IdJsonMessage message, final SuccessorRequest successorRequest) {
-      findSuccessor(successorRequest.uuid).thenCompose(successorReceived -> {
-//        log("remote successor response reply for %s to %s with uuid %s", successorRequest.uuid, peer.getUUID(), message.getUUID());
-        return peer.send(new SuccessorResponse(successorReceived.getUUID(), successorReceived.getListeningAddress()), message.getUUID());
-      }).exceptionally(throwable -> { throwable.printStackTrace(); return null; });
-//    if (isBetween(successorRequest.uuid, localUUID + 1, successor.getUUID())) {
-//      log("local A to successor response for %s with %s to %s", successorRequest.uuid, successor.getUUID(), peer.getUUID());
-//      if (successor == me) {
-//        peer.send(new SuccessorResponse(localUUID, getListeningAddress()), message.getUUID());
-//      } else {
-//        peer.send(new SuccessorResponse(successor.getUUID(), successor.getListeningAddress()), message.getUUID());
-//      }
-//    } else {
-//      log("remote to successor response for %s", successorRequest.uuid);
-//      findSuccessor(successorRequest.uuid).thenCompose(successorReceived -> {
-//        log("remote successor response reply for %s to %s with uuid %s", successorRequest.uuid, peer.getUUID(), message.getUUID());
-//        return peer.send(new SuccessorResponse(successorReceived.getUUID(), successorReceived.getListeningAddress()), message.getUUID());
-//      });
-//      final Peer closestFinger = getClosestPreceedingFinger(successorRequest.uuid);
-//      if (closestFinger != me) {
-//        closestFinger.send(successorRequest)
-//            .thenCompose(peer::receive)
-//            .thenCompose(reply -> {
-//              log("remote successor response reply for %s to %s", successorRequest.uuid, peer);
-//              return peer.send(reply, message.getUUID());
-//            });
-//      } else {
-//        log("local B to successor response for %s with %s to ", successorRequest.uuid, successor.getUUID());
-//        peer.send(new SuccessorResponse(localUUID, getListeningAddress()), message.getUUID());
-//      }
-//    }
-  }
-
-  public CompletionStage<Peer> getSuccessor(int uuid) {
-    return async(() -> findSuccessor(uuid));
-  }
-
-  public CompletionStage<Peer> getSuccessor(final String key) {
-    return async(() -> findSuccessor(hash(key)));
-  }
-
-//  public CompletionStage<Peer> lookup(int uuid) {
-//    return async(() -> findSuccessor(uuid));
-//  }
-
+  /**
+   * Find the successor of a node.
+   * If we are the predecessor of the successor node, answer immediately, otherwise ask another node.
+   */
   private CompletionStage<Peer> findSuccessor(int uuid) {
+    // We are the only node in the ring, return "me"
     if (predecessor == null && (successor == null || successor == me)) {
       return completedFuture(me);
     }
-//    log("findSuccessor %s", uuid);
 
+    // Our successor is the successor node, return our successor
     if (successor != null && isBetween(uuid, localUUID + 1, successor.getUUID()) || successor == me) {
-//      log("findSuccessor %s is between successor", uuid);
       return completedFuture(successor);
     } else {
-//      log("%s is not between %s and %s", uuid, localUUID + 1, successor != null ? successor.getUUID() : null);
+      // Find the closest finger
       final Peer closestFinger = getClosestPreceedingFinger(uuid);
+
+      // The closest predecessor is ourselves, no need to ask around
       if (closestFinger == me) {
-//        log("findSuccessor %s closestFinger == me", uuid);
-        if (successor == null) {
-          return completedFuture(me);
-        }
-        return completedFuture(successor);
+        return completedFuture(me);
       }
 
-//      log("findSuccessor %s asking successor %s", uuid, closestFinger.getUUID());
+      // Ask the closest finger for the the successor of uuid
       return timeout.catchTimeout(closestFinger.send(new SuccessorRequest(uuid))
-          .thenApply(uuid1 -> {
-//            log("sent successor find with uuid %s", uuid1);
-            return uuid1;
-          })
           .thenComposeAsync(closestFinger::receive)
           .thenCompose(reply -> {
+            // Return the connected successor
             final SuccessorResponse successorResponse = reply.getObject(SuccessorResponse.class);
-//            log("got remote reply %s for %s", successorResponse.successor, uuid);
             return getOrConnectPeer(successorResponse.successor, successorResponse.address);
           }), () -> {
+        // No response, return self
         log("successor request timeout for %s to %s", uuid, closestFinger.getUUID());
-        return me;
-//            fingers.remove(closestFinger);
-//            fingers.addFirst(me);
-//            throw new RuntimeException("Successor request timeout!");
-//            return me;
-          });
+            return me;
+        });
     }
   }
 
+  /**
+   * Keep track of connected peers
+   */
   private void onPeerAccepted(final Peer peer) {
     synchronized (connectedPeers) {
       connectedPeers.put(peer.getUUID(), peer);
@@ -307,6 +304,9 @@ public class DHT implements Closeable {
     log("Accepted connection from " + peer.getUUID());
   }
 
+  /**
+   * Keep track of connected peers
+   */
   private void onPeerConnected(final Peer peer) {
     synchronized (connectedPeers) {
       connectedPeers.put(peer.getUUID(), peer);
@@ -314,81 +314,77 @@ public class DHT implements Closeable {
     log("Connected to " + peer.getUUID());
   }
 
-  public static DHT createDefault() {
-    return new DHT(PeerExchangeOverlay.createDefault(new Random().nextInt(size)));
-  }
-
-  public static DHT createDefault(final int uuid) {
-    return new DHT(PeerExchangeOverlay.createDefault(uuid));
-  }
-
+  /**
+   * Start the DHT overlay, listening on <port>
+   */
   public CompletionStage<Void> start(final int port) {
     scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
     return overlay.start(port).thenApply(ignored -> {
       log("Started on " + overlay.getListeningAddress());
-//      System.out.println("UUID: " + overlay.getUUID());
-//      System.out.println("Listening on port " + port + "...");
       return null;
     });
   }
 
+  /**
+   * Return the address on which we are listening for incoming connections
+   */
   public InetSocketAddress getListeningAddress() {
     return overlay.getListeningAddress();
   }
 
-//  public CompletionStage<Void> connect(final InetSocketAddress inetSocketAddress) {
-//    return overlay.connect(inetSocketAddress).thenApply(ignored -> null);
-//  }
-
-  public CompletionStage<Void> join(final InetSocketAddress inetSocketAddress) {
+  /**
+   * Become the first node of the ring
+   */
+  public void initiate() {
     running = true;
+    predecessor = null;
+    successor = me;
+
+    // Initialize all fingers to "me"
     while (fingers.size() < numFingers) {
       fingers.add(me);
     }
 
+    // Start stabilizing
+    stabilizeForever();
+  }
+
+  /**
+   * Join an overlay. Set all fingers to "me", connect and
+   * ask the connected peer about our successor
+   */
+  public CompletionStage<Void> join(final InetSocketAddress inetSocketAddress) {
+    // Initialize all fingers to "me"
+    running = true;
+    while (fingers.size() < numFingers) {
+      fingers.add(me);
+    }
     predecessor = null;
 
+    // Start stabilization
     stabilizeForever();
 
-    return async(() -> {
-      return overlay.connect(inetSocketAddress)
-          .thenApply(peer -> {
-            synchronized (connectedPeers) {
-              connectedPeers.put(peer.getUUID(), peer);
-            }
-            return peer;
-          })
-          .thenCompose(peer -> findSuccessor(peer, localUUID)
-              .thenApply(successor -> {
-                log("Found successor " + successor.getUUID());
-                this.successor = successor;
-//                fingers.clear();
-//                while (fingers.size() < numFingers) {
-//                  fingers.add(successor);
-//                }
-                return null;
-              }));
-    });
+    return async(() ->
+        // Connect to remote peer
+        overlay.connect(inetSocketAddress)
+            .thenApply(peer -> {
+              synchronized (connectedPeers) {
+                connectedPeers.put(peer.getUUID(), peer);
+              }
+              return peer;
+            })
+            // Find our successor
+            .thenCompose(peer -> findSuccessor(peer, localUUID)
+                .thenApply(successor -> {
+                  log("Found successor " + successor.getUUID());
+                  this.successor = successor;
+                  return null;
+                })));
   }
 
-
-
-  public CompletionStage<Void> waitForStable() {
-    isStable = new CompletableFuture<>();
-    return isStable;
-  }
-
-  public CompletionStage<Void> waitForAlone() {
-    isAlone = new CompletableFuture<>();
-    return async(() -> isAlone);
-  }
-
-  public CompletionStage<Void> waitForFingersFixed() {
-    nextFingerToFix = 0;
-    fingersFixed = new CompletableFuture<>();
-    return fingersFixed;
-  }
-
+  /**
+   * Ask a specific peer for a successor. Used for finding the initial successor
+   */
   private CompletionStage<Peer> findSuccessor(final Peer peer, final int uuid) {
     log("initial findSuccessor at " + peer.getUUID() + " for " + uuid);
     return peer.send(new SuccessorRequest(uuid))
@@ -399,120 +395,60 @@ public class DHT implements Closeable {
         });
   }
 
-  private CompletionStage<Peer> getOrConnectPeer(final Integer uuid, final InetSocketAddress address) {
-    if (uuid == null) {
-      return completedFuture(null);
-    }
-
-    if (uuid == localUUID) {
-      return completedFuture(me);
-    }
-
-    Peer peer;
-    synchronized (connectedPeers) {
-      peer = connectedPeers.get(uuid);
-    }
-
-    if (peer != null) {
-      return completedFuture(peer);
-    } else {
-      log("peer " + uuid + " not found. Connecting...");
-      return overlay.connect(address);
-    }
-  }
-
+  /**
+   * Send a heartbeat to our predecessor. If the predecessor does not answer, set predecessor to null
+   */
   public CompletionStage<Void> heartbeat() {
     return handleErrors(async(() -> {
-//      log("heartbeat init!");
+      // There is a predecessor, send it a heartbeat
       if (predecessor != null && predecessor != me) {
-//      System.out.println(localUUID + " Sending heartbeat!");
         final CompletableFuture<IdJsonMessage> replyFuture = predecessor.send(new HeartbeatRequest())
             .thenCompose(predecessor::receive)
             .toCompletableFuture();
 
+        // Fiddle with type inference
         final CompletableFuture<Void> voidReplyFuture = replyFuture.<Void>thenApplyAsync(ignoredAgain -> null);
+
+        // Wait for a timeout
         return timeout.timeout(voidReplyFuture, 500).exceptionally(throwable -> {
           if (throwable instanceof Timeout.TimeoutException) {
             log("heartbeat timeout!");
+            // Timeout reached, reset predecessor to null
             predecessor = null;
             return null;
           } else {
             throw new RuntimeException(throwable);
           }
         });
-      } else {
-//        log("Sending NO heartbeat!");
       }
       return completedFuture(null);
     }), "heartbeat");
   }
 
-  private void log(final String log, final Object... args) {
-//    System.out.println(Thread.currentThread().getName() + " " + localUUID + " " + String.format(log, args));
-    System.out.println(localUUID + " " + String.format(log, args));
-  }
 
-  public CompletionStage<RingProbe> probeRing() {
-    return async(() -> {
-      lastProbeReceieved = new CompletableFuture<>();
-      probeRingUntilResponse();
-//      return lastProbeReceieved;
-      return timeout.timeout(lastProbeReceieved, 1000);
-    });
-  }
-
-  private void probeRingUntilResponse() {
-    if (successor != null && successor != me) {
-      log("sending ring probe");
-      final RingProbe ringProbe = new RingProbe();
-      ringProbe.nodes.add(localUUID);
-
-      final CompletionStage<RingProbe> replyFuture = successor.send(ringProbe)
-          .thenCompose(ignored -> lastProbeReceieved);
-      timeout.timeout(replyFuture, 1000, () -> {
-//        log("ex %s", throwable);
-//        if (throwable instanceof Timeout.TimeoutException || throwable.getCause() instanceof Timeout.TimeoutException) {
-        probeRingUntilResponse();
-//        } else {
-//          log("y?");
-//          throw new RuntimeException(throwable);
-//        }
-//        return null;
-      });
-    }
-  }
-
-//  private <T> CompletionStage<T> forkJoin(Supplier<CompletionStage<T>> supplier) {
-//    ForkJoinPool.commonPool().submit(new ForkJoinTask<Void>() {
-//
-////    ForkJoinTask.adapt(asd -> null);
-//    final CompletableFuture<CompletionStage<T>> done = new CompletableFuture<>();
-////    CompletableFuture.supplyAsync(() -> {
-////
-////    })
-//    ForkJoinPool.commonPool().submit(() -> {
-//      done.complete(supplier.get());
-//    });
-//
-//    return done.get().g;
-//  }
-
+  /**
+   * Replicate our keys to our successor
+   */
   public CompletionStage<Void> replicate() {
     return handleErrors(async(() -> {
       if (successor != null && successor != me) {
         return successor.send(new ReplicationRequest(store)).thenApply(ignored -> null);
       }
-
       return completedFuture(null);
     }), "replicate");
   }
 
+  /**
+   * Run stabilization.
+   */
   public CompletionStage<Void> stabilize() {
     return handleErrors(async(() -> {
+      // Notify that we are alone in the ring
       if (successor == me && predecessor == null && !isAlone.isDone()) {
         isAlone.complete(null);
       }
 
+      // We just started, try to find a successor
       if (successor == null) {
         return findSuccessor(localUUID).thenApplyAsync(peer -> {
           successor = peer;
@@ -520,25 +456,24 @@ public class DHT implements Closeable {
         });
       }
 
+      // We are alone in the ring. Nothing to do
       if (successor == me && (predecessor == me || predecessor == null)) {
         return completedFuture(null);
       }
 
+      // We are our own successor, ask ourselves about our predecessor
       if (successor == me) {
         return updateSuccessorAndSendNotification(predecessor);
       }
 
+      // Notify that we have a successor and predecessor that's not ourselves
       if (predecessor != null && predecessor != me && !isStable.isDone()) {
         isStable.complete(null);
       }
 
-//      log("Sending predecessor request to " + successor.getUUID());
-//    return timeout.catchTimeout(successor.send(new PredecessorRequest())
+      // Send a predecessor request to our successor
+      // If our successors predecessor are in between us, update the predecessor
       return successor.send(new PredecessorRequest())
-          .thenApply(uuid -> {
-//            log("Sent predecessor request");
-            return uuid;
-          })
           .thenCompose(successor::receive)
           .thenCompose(reply -> {
             final PredecessorResponse predecessorResponse = reply.getObject(PredecessorResponse.class);
@@ -562,26 +497,39 @@ public class DHT implements Closeable {
     });
   }
 
+  /**
+   * If our successors predecessor is between us and our successor, update successor and notify
+   * the successor that we are its predecessor
+   */
   private CompletionStage<Void> updateSuccessorAndSendNotification(final Peer successorsPredecessor) {
+    // Update successor since the received predecessor is between
     if (successorsPredecessor != null && isBetween(successorsPredecessor.getUUID(), localUUID + 1, successor.getUUID())) {
       successor = successorsPredecessor;
     }
 
+    // We are our own sucessor, no notification needed
     if (successor == me) {
       return completedFuture(null);
     }
 
-//    log("Sending predecessor notification to " + successor.getUUID());
+    // Notify our successor that we are its predecessor
     return successor.send(new PredecessorNotification(localUUID, overlay.getListeningAddress()))
         .thenApplyAsync(ignored -> null);
   }
 
+  /**
+   * Fix fingers, one by one by finding the successor of uuid+K^index
+   */
   public CompletionStage<Void> fixFingers() {
     return handleErrors(async(() -> {
       if (successor == null) {
         return completedFuture(null);
       }
+
+      // Find the next finger to fix
       if (nextFingerToFix > fingers.size() - 1) {
+
+        // Notify that all fingers are fixed
         if (!fingersFixed.isDone()) {
           fingersFixed.complete(null);
         }
@@ -589,8 +537,9 @@ public class DHT implements Closeable {
       }
 
       final int nextPosition = (localUUID + (int) Math.pow(K, nextFingerToFix)) % size;
+
+      // Update finger
       return findSuccessor(nextPosition).thenApply(successor -> {
-//      System.out.println(localUUID + " set finger " + nextFingerToFix + " to " + successor.getUUID() + " at position " + nextPosition);
         fingers.set(nextFingerToFix, successor);
         nextFingerToFix = nextFingerToFix + 1;
         return null;
@@ -598,44 +547,34 @@ public class DHT implements Closeable {
     }), "fix fingers");
   }
 
-  public void initiate() {
-    running = true;
-    predecessor = null;
-    successor = me;
-    while (fingers.size() < numFingers) {
-      fingers.add(me);
-    }
-
-    stabilizeForever();
-  }
-
+  /**
+   * Get the closest finger to a given uuid by traversing the finger
+   * table from the end to the beginning
+   */
   private Peer getClosestPreceedingFinger(final int uuid) {
     if (successor == null) {
       return me;
     }
-//    return successor;
 
-//    if (uuid == 244 || uuid == 201) {
-//      printFingerTable();
-//    }
+    // Get the last node that's between us and the uuid
     for (final Peer peer : Lists.reverse(fingers)) {
+      // We are not interested in ourselves
       if (peer == me) {
         continue;
       }
+
       if (isBetween(peer.getUUID(), localUUID, uuid - 1)) {
         return peer;
       }
     }
-//
-//    log("closest is me for %s", uuid);
-////    printFingerTable();
-//    if (successor != me) {
-//      return successor;
-//    }
 
+    // None found, return "me"
     return me;
   }
 
+  /**
+   * Get <key> from DHT
+   */
   public CompletionStage<String> get(final String key) {
     return async(() -> {
       final int hash = hash(key);
@@ -652,6 +591,9 @@ public class DHT implements Closeable {
     });
   }
 
+  /**
+   * Set <key> to <value> in DHT
+   */
   public CompletionStage<Void> set(final String key, final String value) {
     return async(() -> {
       final int hash = hash(key);
@@ -668,6 +610,9 @@ public class DHT implements Closeable {
     });
   }
 
+  /**
+   * Return whether uuid is between from and to, inclusive, on the ring
+   */
   private boolean isBetween(final int uuid, final int from, final int to) {
     if (to == from) {
       return true;
@@ -679,6 +624,41 @@ public class DHT implements Closeable {
     }
   }
 
+  /**
+   * Run heartbeat(), stabilize(), replicate() and fixFingers() every second
+   */
+  private void stabilizeForever() {
+    // Announce known peers to all connected peers every second
+    scheduledExecutorService.schedule(() -> {
+      try {
+        heartbeat().toCompletableFuture().get();
+        stabilize().toCompletableFuture().get(15000, TimeUnit.MILLISECONDS);
+        replicate().toCompletableFuture().get();
+        fixFingers().toCompletableFuture().get();
+      } catch (Exception e) {
+        e.printStackTrace();
+      } finally {
+        // Log interesting data every 10 seconds
+        if (lastLog.isBefore(Instant.now().minus(10, ChronoUnit.SECONDS))) {
+          lastLog = Instant.now();
+          printFingerTable();
+        }
+
+        // Stop if we are asked to
+        if (running) {
+          stabilizeForever();
+        } else {
+          if (!stopped.isDone()) {
+            stopped.complete(null);
+          }
+        }
+      }
+    }, 1, TimeUnit.SECONDS);
+  }
+
+  /**
+   * Stop the DHT, disconnecting all clients and not responding to incoming messages
+   */
   public CompletableFuture<Void> stop() {
     log("stopping");
     return async(() -> {
@@ -696,36 +676,85 @@ public class DHT implements Closeable {
     }).toCompletableFuture();
   }
 
-  private void stabilizeForever() {
-    // Announce known peers to all connected peers every second
-    scheduledExecutorService.schedule(() -> {
-      try {
-        heartbeat().toCompletableFuture().get();
-//        ForkJoinPool.commonPool().submit(ForkJoinTask.adapt())
-        stabilize().toCompletableFuture().get(15000, TimeUnit.MILLISECONDS);
-        replicate().toCompletableFuture().get();
-        fixFingers().toCompletableFuture().get();
-      } catch (Exception e) {
-        e.printStackTrace();
-      } finally {
-        if (lastLog.isBefore(Instant.now().minus(10, ChronoUnit.SECONDS))) {
-          lastLog = Instant.now();
-//          log("predecessor: " + (predecessor != null ? predecessor.getUUID() : "null"));
-//          log("successor: " + (successor != null ? successor.getUUID() : "null"));
-          printFingerTable();
-        }
+  /**
+   * Send a probe around the ring to figure out the topology
+   */
+  public CompletionStage<RingProbe> probeRing() {
+    return async(() -> {
+      lastProbeReceieved = new CompletableFuture<>();
+      probeRingUntilResponse();
+      return timeout.timeout(lastProbeReceieved, 1000);
+    });
+  }
 
-        if (running) {
-//          log("stabilize forever");
-          stabilizeForever();
-        } else {
-//          log("stabilize stop");
-          if (!stopped.isDone()) {
-            stopped.complete(null);
-          }
-        }
-      }
-    }, 1, TimeUnit.SECONDS);
+  /**
+   * Send a probe around the ring to figure out the topology. Repeat until we get a response
+   */
+  private void probeRingUntilResponse() {
+    if (successor != null && successor != me) {
+      log("sending ring probe");
+      final RingProbe ringProbe = new RingProbe();
+      ringProbe.nodes.add(localUUID);
+
+      final CompletionStage<RingProbe> replyFuture = successor.send(ringProbe)
+          .thenCompose(ignored -> lastProbeReceieved);
+      timeout.timeout(replyFuture, 1000, () -> {
+      });
+    }
+  }
+
+  /**
+   * Return a Peer object for a given uuid and address. If the peer is not already connected, it
+   * will be connected to. If it is, the peer is immediately returned
+   */
+  private CompletionStage<Peer> getOrConnectPeer(final Integer uuid, final InetSocketAddress address) {
+    if (uuid == null) {
+      return completedFuture(null);
+    }
+
+    if (uuid == localUUID) {
+      return completedFuture(me);
+    }
+
+    Peer peer;
+    synchronized (connectedPeers) {
+      peer = connectedPeers.get(uuid);
+    }
+
+    if (peer != null) {
+      return completedFuture(peer);
+    } else {
+      log("peer " + uuid + " not found. Connecting...");
+      return overlay.connect(address);
+    }
+  }
+
+  public CompletionStage<Void> waitForStable() {
+    isStable = new CompletableFuture<>();
+    return isStable;
+  }
+
+  public CompletionStage<Void> waitForAlone() {
+    isAlone = new CompletableFuture<>();
+    return async(() -> isAlone);
+  }
+
+  public CompletionStage<Void> waitForFingersFixed() {
+    nextFingerToFix = 0;
+    fingersFixed = new CompletableFuture<>();
+    return fingersFixed;
+  }
+
+  public CompletionStage<Peer> getSuccessor(int uuid) {
+    return async(() -> findSuccessor(uuid));
+  }
+
+  public CompletionStage<Peer> getSuccessor(final String key) {
+    return async(() -> findSuccessor(hash(key)));
+  }
+
+  private void log(final String log, final Object... args) {
+    System.out.println(localUUID + " " + String.format(log, args));
   }
 
   public void printFingerTable() {
@@ -739,6 +768,14 @@ public class DHT implements Closeable {
 
   public int getUUID() {
     return localUUID;
+  }
+
+  public static DHT createDefault() {
+    return new DHT(PeerExchangeOverlay.createDefault(new Random().nextInt(size)));
+  }
+
+  public static DHT createDefault(final int uuid) {
+    return new DHT(PeerExchangeOverlay.createDefault(uuid));
   }
 
   @Override
