@@ -221,16 +221,27 @@ public class DHTTest {
     dht2.waitForStable().toCompletableFuture().get();
     dht3.waitForStable().toCompletableFuture().get();
 
-//    CompletionStage<Void> fingers1 = dht1.waitForFingersFixed();
-//    CompletionStage<Void> fingers2 = dht2.waitForFingersFixed();
-//    CompletionStage<Void> fingers3 = dht3.waitForFingersFixed();
-//    fingers1.toCompletableFuture().get();
-//    fingers2.toCompletableFuture().get();
-//    fingers3.toCompletableFuture().get();
+    CompletionStage<Void> fingers1 = dht1.waitForFingersFixed();
+    CompletionStage<Void> fingers2 = dht2.waitForFingersFixed();
+    CompletionStage<Void> fingers3 = dht3.waitForFingersFixed();
+    fingers1.toCompletableFuture().get();
+    fingers2.toCompletableFuture().get();
+    fingers3.toCompletableFuture().get();
 //
-//    dht1.printFingerTable();
-//    dht2.printFingerTable();
-//    dht3.printFingerTable();
+    dht1.printFingerTable();
+    dht2.printFingerTable();
+    dht3.printFingerTable();
+
+    fingers1 = dht1.waitForFingersFixed();
+    fingers2 = dht2.waitForFingersFixed();
+    fingers3 = dht3.waitForFingersFixed();
+    fingers1.toCompletableFuture().get();
+    fingers2.toCompletableFuture().get();
+    fingers3.toCompletableFuture().get();
+//
+    dht1.printFingerTable();
+    dht2.printFingerTable();
+    dht3.printFingerTable();
 
     boolean a99 = (100 == dht1.getSuccessor(99).toCompletableFuture().get().getUUID());
     boolean a100 = (100 == dht1.getSuccessor(100).toCompletableFuture().get().getUUID());
